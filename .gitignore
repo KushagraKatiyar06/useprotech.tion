@@ -1,1 +1,2 @@
-testing(ignore)/.env
+testing/.env
+venv/

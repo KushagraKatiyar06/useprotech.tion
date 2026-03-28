@@ -1,2 +1,9 @@
 e2b_code_interpreter
 python-dotenv
+networkx
+matplotlib
+scipy
+google-generativeai
+google-genai
+cryptography
+requests

@@ -1,4 +1,5 @@
 import json
+import time
 import anthropic
 from dotenv import load_dotenv
 
@@ -75,11 +76,16 @@ def run_mitre_mapping(ingestion_output: dict) -> dict:
         user_message=f"Map these malware behaviors to MITRE ATT&CK: {json.dumps(ingestion_output)}"
     )
 
-def run_remediation(static_output: dict, mitre_output: dict) -> dict:
-    print("Running Remediation Agent...")
-    return call_claude(
+def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -> dict:
+    print(f"Running Remediation Agent (attempt {attempt})...")
+    result = call_claude(
         system_prompt="""You are a cybersecurity incident responder.
-        Given malware analysis and MITRE techniques, provide YARA rule, IOCs, containment steps.
+        Given malware analysis and MITRE techniques, provide:
+        1. A YARA detection rule
+        2. IOCs to immediately block
+        3. Containment steps in priority order
+        4. A confidence score (0.0 to 1.0)
+        If confidence is below 0.75, set needs_rerun to true.
         Output valid JSON only, no markdown, no explanation.
         Format:
         {
@@ -89,14 +95,18 @@ def run_remediation(static_output: dict, mitre_output: dict) -> dict:
             "confidence": 0.9,
             "needs_rerun": false
         }""",
-        user_message=f"Generate remediation. Static: {json.dumps(static_output)}. MITRE: {json.dumps(mitre_output)}"
+        user_message=f"Generate remediation for this malware. Static analysis: {json.dumps(static_output)}. MITRE techniques: {json.dumps(mitre_output)}"
     )
+    if result.get("needs_rerun") and attempt < 2:
+        print("Confidence low, rerunning remediation...")
+        return run_remediation(static_output, mitre_output, attempt + 1)
+    return result
 
 def run_report(ingestion: dict, static: dict, mitre: dict, remediation: dict) -> dict:
     print("Running Report Agent...")
     return call_claude(
         system_prompt="""You are a senior threat intelligence analyst.
-        Synthesize all findings into a final report.
+        Synthesize all findings into a final report for technical and executive audiences.
         Output valid JSON only, no markdown, no explanation.
         Format:
         {
@@ -109,26 +119,47 @@ def run_report(ingestion: dict, static: dict, mitre: dict, remediation: dict) ->
             "action_plan": [{"priority": 1, "action": "string", "urgency": "immediate"}],
             "confidence": 0.9
         }""",
-        user_message=f"Generate final report. Ingestion: {json.dumps(ingestion)}. Static: {json.dumps(static)}. MITRE: {json.dumps(mitre)}. Remediation: {json.dumps(remediation)}"
+        user_message=f"Generate final threat report. Ingestion: {json.dumps(ingestion)}. Static: {json.dumps(static)}. MITRE: {json.dumps(mitre)}. Remediation: {json.dumps(remediation)}"
     )
 
 def run_pipeline(file_metadata: dict):
     print("Starting MalwareScope Pipeline...")
     print("=" * 50)
 
+    # Step 1: Ingestion
     ingestion = run_ingestion(file_metadata)
-    print(f"Ingestion complete")
+    print(f"Ingestion complete — {len(ingestion['suspicious_flags'])} flags found")
 
-    # TODO: run static + MITRE in parallel
-    static = run_static_analysis(ingestion)
-    mitre = run_mitre_mapping(ingestion)
+    # Step 2: Static + MITRE in parallel (using threads)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        print("Running Static Analysis + MITRE Mapping in parallel...")
+        static_future = executor.submit(run_static_analysis, ingestion)
+        mitre_future = executor.submit(run_mitre_mapping, ingestion)
+        static = static_future.result()
+        mitre = mitre_future.result()
+    print(f"Static Analysis complete — {static['malware_type']}, severity {static['severity']}/10")
+    print(f"MITRE Mapping complete — {len(mitre['techniques'])} techniques identified")
 
+    # Step 3: Remediation (with self-correction loop)
     remediation = run_remediation(static, mitre)
-    report = run_report(ingestion, static, mitre, remediation)
+    print(f"Remediation complete — confidence {remediation['confidence']}")
 
-    print("Pipeline complete!")
+    # Step 4: Final Report
+    report = run_report(ingestion, static, mitre, remediation)
+    print(f"Report complete — risk score {report['risk_score']}/100")
+
+    print("\n" + "=" * 50)
+    print("Pipeline complete! Final report:")
     print(json.dumps(report, indent=2))
-    return report
+
+    return {
+        "ingestion": ingestion,
+        "static_analysis": static,
+        "mitre_mapping": mitre,
+        "remediation": remediation,
+        "report": report
+    }
 
 mock_file = {
     "file_name": "6108674530.JS.malicious",

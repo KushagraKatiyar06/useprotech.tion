@@ -17,6 +17,7 @@ build/
 
 # Malware samples
 *.malicious
+testing/6108674530.JS.malicious
 *.mal
 *.bin
 *.exe

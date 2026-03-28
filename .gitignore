@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+package-lock.json
 
 # Build outputs
 .next/
@@ -17,6 +18,7 @@ build/
 
 # OS
 .DS_Store
+Thumbs.db
 
 # Editor
 .vscode/

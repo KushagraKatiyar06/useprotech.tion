@@ -1,0 +1,14 @@
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+  
+  /* Forces the Doto font on EVERY element */
+  font-family: 'Doto', sans-serif !important;
+  
+  /* Forces the SQUARE block look globally */
+  font-variation-settings: 'RNDL' 0 !important;
+  
+  /* Forces All-Caps everywhere */
+  text-transform: uppercase !important;
+}

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 import anthropic
@@ -17,7 +18,12 @@ def call_claude(system_prompt: str, user_message: str) -> dict:
         messages=[{"role": "user", "content": user_message}]
     )
     text = response.content[0].text.strip()
-    return json.loads(text)
+    # Strip markdown if present
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    return json.loads(text.strip())
 
 def run_ingestion(file_metadata: dict) -> dict:
     print("Running Ingestion Agent...")
@@ -97,6 +103,7 @@ def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -
         }""",
         user_message=f"Generate remediation for this malware. Static analysis: {json.dumps(static_output)}. MITRE techniques: {json.dumps(mitre_output)}"
     )
+    # Self-correction loop
     if result.get("needs_rerun") and attempt < 2:
         print("Confidence low, rerunning remediation...")
         return run_remediation(static_output, mitre_output, attempt + 1)
@@ -161,12 +168,19 @@ def run_pipeline(file_metadata: dict):
         "report": report
     }
 
+# Test
 mock_file = {
     "file_name": "6108674530.JS.malicious",
     "file_type": "JavaScript",
     "file_size_kb": 4086,
     "sha256": "abc123placeholder",
-    "raw_indicators": ["eval", "unescape", "WScript.Shell", "ActiveXObject", "http://suspicious-domain.ru"]
+    "raw_indicators": [
+        "eval",
+        "unescape",
+        "WScript.Shell",
+        "ActiveXObject",
+        "http://suspicious-domain.ru"
+    ]
 }
 
 if __name__ == "__main__":

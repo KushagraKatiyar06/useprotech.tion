@@ -129,32 +129,57 @@ def run_report(ingestion: dict, static: dict, mitre: dict, remediation: dict) ->
         user_message=f"Generate final threat report. Ingestion: {json.dumps(ingestion)}. Static: {json.dumps(static)}. MITRE: {json.dumps(mitre)}. Remediation: {json.dumps(remediation)}"
     )
 
-def run_pipeline(file_metadata: dict):
+def run_pipeline(file_metadata: dict, progress_cb=None):
+    """Run the full analysis pipeline.
+
+    progress_cb, if provided, is called with a dict at each stage transition:
+      {"event": str, "status": "running"|"complete", "data": dict|None, "message": str|None}
+    """
+    import concurrent.futures
+
+    def emit(event: str, status: str, data=None, message: str = None):
+        if progress_cb:
+            payload = {"event": event, "status": status}
+            if message:
+                payload["message"] = message
+            if data is not None:
+                payload["data"] = data
+            progress_cb(payload)
+
     print("Starting MalwareScope Pipeline...")
     print("=" * 50)
 
     # Step 1: Ingestion
+    emit("ingestion", "running", message="Structuring file metadata and flagging suspicious indicators...")
     ingestion = run_ingestion(file_metadata)
-    print(f"Ingestion complete — {len(ingestion['suspicious_flags'])} flags found")
+    flags = ingestion.get("suspicious_flags", [])
+    print(f"Ingestion complete — {len(flags)} flags found")
+    emit("ingestion", "complete", data=ingestion)
 
-    # Step 2: Static + MITRE in parallel (using threads)
-    import concurrent.futures
+    # Step 2: Static + MITRE in parallel
+    emit("static_analysis", "running", message="Classifying malware type and assessing severity...")
+    emit("mitre_mapping", "running", message="Mapping behaviors to MITRE ATT&CK techniques...")
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        print("Running Static Analysis + MITRE Mapping in parallel...")
         static_future = executor.submit(run_static_analysis, ingestion)
         mitre_future = executor.submit(run_mitre_mapping, ingestion)
         static = static_future.result()
         mitre = mitre_future.result()
-    print(f"Static Analysis complete — {static['malware_type']}, severity {static['severity']}/10")
-    print(f"MITRE Mapping complete — {len(mitre['techniques'])} techniques identified")
+    print(f"Static Analysis complete — {static.get('malware_type', '?')}, severity {static.get('severity', '?')}/10")
+    print(f"MITRE Mapping complete — {len(mitre.get('techniques', []))} techniques identified")
+    emit("static_analysis", "complete", data=static)
+    emit("mitre_mapping", "complete", data=mitre)
 
     # Step 3: Remediation (with self-correction loop)
+    emit("remediation", "running", message="Generating YARA rule, IOC blocklist, and containment steps...")
     remediation = run_remediation(static, mitre)
-    print(f"Remediation complete — confidence {remediation['confidence']}")
+    print(f"Remediation complete — confidence {remediation.get('confidence', '?')}")
+    emit("remediation", "complete", data=remediation)
 
     # Step 4: Final Report
+    emit("report", "running", message="Synthesizing executive report and action plan...")
     report = run_report(ingestion, static, mitre, remediation)
-    print(f"Report complete — risk score {report['risk_score']}/100")
+    print(f"Report complete — risk score {report.get('risk_score', '?')}/100")
+    emit("report", "complete", data=report)
 
     print("\n" + "=" * 50)
     print("Pipeline complete! Final report:")
@@ -165,7 +190,7 @@ def run_pipeline(file_metadata: dict):
         "static_analysis": static,
         "mitre_mapping": mitre,
         "remediation": remediation,
-        "report": report
+        "report": report,
     }
 
 # Test

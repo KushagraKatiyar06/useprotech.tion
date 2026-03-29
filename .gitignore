@@ -1,25 +1,53 @@
-# Dependencies
-node_modules/
-package-lock.json
-
-# Build outputs
-.next/
-out/
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
 dist/
 build/
-
-# TypeScript
-*.tsbuildinfo
-
+.DS_Store
 # Environment
 .env
-.env.local
-.env.*.local
+testing/.env
+*.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Malware samples
+*.malicious
+testing/6108674530.JS.malicious
+*.mal
+*.bin
+*.exe
+*.dll
+*.ps1
+samples/
+
+# Analysis output
+*.json
+output/
+results/
+
+# Docker
+.dockerignore
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Editor
-.vscode/
-.idea/

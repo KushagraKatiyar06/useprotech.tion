@@ -4,12 +4,12 @@ import json
 import tempfile
 import shutil
 import subprocess
+import traceback
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'sandbox'))
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import anthropic
 from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
@@ -26,19 +26,23 @@ try:
 except ImportError:
     ha_analyze = None
 
+try:
+    from pipeline import run_pipeline
+except ImportError as e:
+    print(f"Warning: could not import run_pipeline: {e}")
+    run_pipeline = None
+
 HA_API_KEY = os.getenv("HYBRID_ANALYSIS_API_KEY", "")
 
 app = FastAPI(title="UseProtechtion Malware Analysis API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "http://127.0.0.1:3001"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 SANDBOX_IMAGE = "useprotection-sandbox"
 SANDBOX_DIR   = os.path.join(os.path.dirname(__file__), '..', 'sandbox')
@@ -124,41 +128,6 @@ def run_dynamic_in_docker(filepath: str, filename: str) -> dict | None:
     except Exception as e:
         print(f"Docker dynamic exception: {e}")
     return None
-
-
-# ── Claude AI report ───────────────────────────────────────────────────────────
-
-def call_claude_report(file_meta: dict) -> dict:
-    response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
-        system="""You are a senior malware analyst. Given static and dynamic analysis results, generate a concise threat report.
-Output valid JSON only. No markdown, no explanation.
-Format:
-{
-  "malware_type": "RANSOMWARE | DROPPER | LOADER | INFOSTEALER | RAT | DOWNLOADER | BACKDOOR",
-  "risk_score": integer 0-100,
-  "classification_confidence": integer 0-100,
-  "behavior_confidence": integer 0-100,
-  "findings": [
-    {"type": "critical", "label": "CRITICAL", "text": "short finding"},
-    {"type": "warn",     "label": "WARNING",  "text": "short finding"},
-    {"type": "ok",       "label": "INFO",     "text": "short finding"}
-  ],
-  "mitigations": ["① step", "② step", "③ step", "④ step", "⑤ step"],
-  "reasoning": "2-3 sentence technical explanation of the threat and kill chain"
-}""",
-        messages=[{
-            "role": "user",
-            "content": f"Analyze this malware report:\n{json.dumps(file_meta, indent=2)}"
-        }]
-    )
-
-    text = response.content[0].text.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        text = "\n".join(lines[1:-1] if lines[-1] == "```" else lines[1:])
-    return json.loads(text)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -251,20 +220,30 @@ async def analyze(file: UploadFile = File(...)):
             file_meta["pe_signatures"]      = [s["name"] for s in dynamic_pe.get("signatures", [])][:10]
             file_meta["pe_mitre"]           = dynamic_pe.get("mitre", [])[:10]
 
-        ai_report = call_claude_report(file_meta)
+        print(f"[analyze] static done, behaviors={len(file_meta.get('behaviors',[]))}, running pipeline...")
+        if run_pipeline:
+            pipeline_result = run_pipeline(file_meta)
+            ai_report = pipeline_result["report"]
+            agents = {k: pipeline_result[k] for k in ("ingestion", "static_analysis", "mitre_mapping", "remediation")}
+            print("[analyze] pipeline done")
+        else:
+            raise HTTPException(status_code=500, detail="AI pipeline unavailable")
 
         return {
             "static":     static_result,
             "dynamic_js": dynamic_js,
             "dynamic_pe": dynamic_pe,
             "report":     ai_report,
+            "agents":     agents,
         }
 
     except json.JSONDecodeError as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"AI report parse error: {e}")
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     finally:
         os.unlink(tmp_path)

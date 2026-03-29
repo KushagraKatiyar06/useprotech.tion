@@ -373,11 +373,12 @@ body::before {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px;
-  height: 280px;
+  height: 420px;
   overflow-y: auto;
   font-size: 12px;
   line-height: 1.8;
   font-family: 'JetBrains Mono', monospace;
+  scroll-behavior: smooth;
 }
 
 .log-line { display: flex; gap: 12px; }

@@ -55,7 +55,7 @@ export default function Dashboard() {
           if (!r.ok) throw new Error(`API error ${r.status}`);
           return r.json();
         })
-        .then((data: { static: StaticResult; dynamic_js?: unknown; dynamic_pe?: unknown; report: ReportData }) => {
+        .then((data: { static: StaticResult; dynamic_js?: unknown; dynamic_pe?: unknown; report: ReportData; agents?: unknown }) => {
           setStaticData(data.static);
           setReportData(data.report);
           apiDoneRef.current = true;

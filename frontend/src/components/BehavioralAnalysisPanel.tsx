@@ -6,6 +6,30 @@ import { DEMO_CONNS, DEMO_LOGS, DEMO_PROCS, type LogEntry, type Connection, type
 
 const STAGES = ['UPLOAD', 'SANDBOX', 'MONITOR', 'PARSE', 'AI ANALYZE', 'REPORT'];
 
+// ── Agent pipeline node definitions ───────────────────────────────────────────
+const AGENT_NODES = [
+  { id: 'ingestion',       label: 'INGESTION',    desc: 'Triage & structure',    col: 0, row: 0 },
+  { id: 'static_analysis', label: 'STATIC',       desc: 'Classify & behaviors',  col: 1, row: 0 },
+  { id: 'mitre_mapping',   label: 'MITRE',        desc: 'ATT&CK mapping',        col: 1, row: 1 },
+  { id: 'remediation',     label: 'REMEDIATION',  desc: 'YARA + IOC blocking',   col: 2, row: 0 },
+  { id: 'report',          label: 'REPORT',       desc: 'Final threat intel',     col: 3, row: 0 },
+];
+
+// Stage → which agents are active/done
+function agentStatuses(currentStage: number, stageDone: boolean[]): Record<string, 'idle' | 'running' | 'done'> {
+  const allDone = stageDone[5];
+  if (allDone) return Object.fromEntries(AGENT_NODES.map(n => [n.id, 'done'])) as Record<string, 'idle' | 'running' | 'done'>;
+
+  const s: Record<string, 'idle' | 'running' | 'done'> = {};
+  for (const n of AGENT_NODES) s[n.id] = 'idle';
+
+  if (currentStage >= 1) { s['ingestion'] = stageDone[2] ? 'done' : 'running'; }
+  if (currentStage >= 3) { s['static_analysis'] = stageDone[3] ? 'done' : 'running'; s['mitre_mapping'] = stageDone[3] ? 'done' : 'running'; }
+  if (currentStage >= 4) { s['remediation'] = stageDone[4] ? 'done' : 'running'; }
+  if (currentStage >= 5) { s['report'] = 'running'; }
+  return s;
+}
+
 export interface StaticResult {
   file_type: string;
   file_name?: string;
@@ -263,13 +287,13 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone, stati
       </div>
 
       <div className="tab-row">
-        {['process', 'logs', 'network'].map(tab => (
+        {['process', 'logs', 'network', 'agents', 'tree'].map(tab => (
           <div
             key={tab}
             className={`tab ${activeTab === tab ? 'active' : ''}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === 'process' ? 'IMPORTS' : tab === 'network' ? 'NETWORK' : 'RAW LOGS'}
+            {tab === 'process' ? 'IMPORTS' : tab === 'network' ? 'NETWORK' : tab === 'logs' ? 'RAW LOGS' : tab === 'agents' ? 'AGENTS' : 'PROC TREE'}
           </div>
         ))}
       </div>
@@ -330,6 +354,141 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone, stati
             </div>
           </div>
         </>
+      )}
+
+      {activeTab === 'agents' && (() => {
+        const statuses = agentStatuses(currentStage, stageDone);
+        const COL_W = 88, ROW_H = 54, PAD_X = 12, PAD_Y = 16;
+        const nodeColor = (s: string) => s === 'done' ? '#00ff88' : s === 'running' ? '#ffcc00' : 'rgba(255,255,255,0.18)';
+        const nodeBg    = (s: string) => s === 'done' ? 'rgba(0,255,136,0.08)' : s === 'running' ? 'rgba(255,204,0,0.10)' : 'rgba(255,255,255,0.03)';
+        const nodeW = 76, nodeH = 36;
+
+        // positions: 4 columns, 2 rows
+        const pos = (col: number, row: number) => ({
+          x: PAD_X + col * COL_W,
+          y: PAD_Y + row * ROW_H,
+        });
+
+        // edges: ingestion→static, ingestion→mitre, static→remediation, mitre→remediation, remediation→report
+        const edges: [string, string][] = [
+          ['ingestion', 'static_analysis'],
+          ['ingestion', 'mitre_mapping'],
+          ['static_analysis', 'remediation'],
+          ['mitre_mapping', 'remediation'],
+          ['remediation', 'report'],
+        ];
+
+        const nodePos = Object.fromEntries(AGENT_NODES.map(n => {
+          const { x, y } = pos(n.col, n.row);
+          return [n.id, { x: x + nodeW / 2, y: y + nodeH / 2, px: x, py: y }];
+        }));
+
+        const svgW = PAD_X + 4 * COL_W + nodeW;
+        const svgH = PAD_Y + 2 * ROW_H + nodeH;
+
+        return (
+          <div style={{ padding: '8px 0' }}>
+            <div className="f9 text-dim" style={{ marginBottom: 8 }}>CLAUDE AI AGENT PIPELINE — 5 AGENTS</div>
+            <svg width="100%" viewBox={`0 0 ${svgW} ${svgH}`} style={{ overflow: 'visible' }}>
+              {/* edges */}
+              {edges.map(([from, to]) => {
+                const f = nodePos[from], t = nodePos[to];
+                const color = statuses[from] === 'done' ? '#00ff88' : statuses[from] === 'running' ? '#ffcc00' : 'rgba(255,255,255,0.1)';
+                return (
+                  <line key={`${from}-${to}`}
+                    x1={f.x + nodeW / 2} y1={f.y}
+                    x2={t.x - nodeW / 2} y2={t.y}
+                    stroke={color} strokeWidth={1.5} strokeDasharray={statuses[from] === 'running' ? '4 3' : undefined}
+                  />
+                );
+              })}
+              {/* nodes */}
+              {AGENT_NODES.map(n => {
+                const s = statuses[n.id];
+                const { px, py } = nodePos[n.id];
+                return (
+                  <g key={n.id}>
+                    <rect x={px} y={py} width={nodeW} height={nodeH} rx={6}
+                      fill={nodeBg(s)} stroke={nodeColor(s)} strokeWidth={1.2} />
+                    <text x={px + nodeW / 2} y={py + 13} textAnchor="middle"
+                      fontSize={8} fontFamily="'Orbitron',monospace" fill={nodeColor(s)} letterSpacing={1}>
+                      {n.label}
+                    </text>
+                    <text x={px + nodeW / 2} y={py + 25} textAnchor="middle"
+                      fontSize={7} fontFamily="monospace" fill="rgba(255,255,255,0.35)">
+                      {n.desc}
+                    </text>
+                    <text x={px + nodeW / 2} y={py + nodeH - 4} textAnchor="middle"
+                      fontSize={7} fontFamily="monospace" fill={nodeColor(s)}>
+                      {s === 'running' ? '● ACTIVE' : s === 'done' ? '✓ DONE' : '○ IDLE'}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+            <div style={{ fontSize: 9, color: 'var(--text-dim)', marginTop: 8, lineHeight: 1.7 }}>
+              <span style={{ color: '#00ff88', marginRight: 10 }}>● DONE</span>
+              <span style={{ color: '#ffcc00', marginRight: 10 }}>● ACTIVE</span>
+              <span style={{ color: 'rgba(255,255,255,0.3)' }}>● IDLE</span>
+            </div>
+          </div>
+        );
+      })()}
+
+      {activeTab === 'tree' && (
+        <div style={{ padding: '8px 0' }}>
+          <div className="f9 text-dim" style={{ marginBottom: 8 }}>PROCESS TREE</div>
+          {procs.length === 0 ? (
+            <div className="f9 text-dim" style={{ textAlign: 'center', padding: 16 }}>
+              No process data yet.<span className="blink">_</span>
+            </div>
+          ) : (() => {
+            const roots = procs.filter(p => !procs.some(q => q.name === p.parent));
+            const children = procs.filter(p => procs.some(q => q.name === p.parent));
+            const nodeW = 160, nodeH = 40, gapX = 12, gapY = 28;
+
+            const nodeColor = (c: string) => c === 'red' ? '#ff4466' : c === 'yellow' ? '#ffcc00' : '#00ff88';
+            const nodeBg    = (c: string) => c === 'red' ? 'rgba(255,68,102,0.14)' : c === 'yellow' ? 'rgba(255,204,0,0.10)' : 'rgba(0,255,136,0.06)';
+
+            // Vertical tree: roots at top, children below stacked
+            const rootNodes = roots.map((p, i) => ({ ...p, x: i * (nodeW + gapX), y: 0 }));
+            const childNodes = children.map((p, i) => ({ ...p, x: i * (nodeW + gapX), y: nodeH + gapY }));
+            const allPos = [...rootNodes, ...childNodes];
+
+            const cols = Math.max(roots.length, children.length);
+            const totalW = cols * (nodeW + gapX) - gapX;
+            const totalH = (roots.length > 0 && children.length > 0) ? nodeH * 2 + gapY : nodeH;
+
+            return (
+              <div style={{ overflowX: 'auto', overflowY: 'visible' }}>
+                <svg width={Math.max(totalW + 8, 300)} height={totalH + 16} viewBox={`-4 -4 ${totalW + 8} ${totalH + 8}`}>
+                  {childNodes.map((c, ci) => {
+                    const parentNode = allPos.find(p => p.name === c.parent);
+                    if (!parentNode) return null;
+                    return (
+                      <line key={`edge-${ci}`}
+                        x1={parentNode.x + nodeW / 2} y1={parentNode.y + nodeH}
+                        x2={c.x + nodeW / 2} y2={c.y}
+                        stroke="rgba(0,245,255,0.25)" strokeWidth={1.5} strokeDasharray="4 3" />
+                    );
+                  })}
+                  {allPos.map((p, pi) => (
+                    <g key={`proc-${pi}`}>
+                      <rect x={p.x} y={p.y} width={nodeW} height={nodeH} rx={6}
+                        fill={nodeBg(p.color)} stroke={nodeColor(p.color)} strokeWidth={1.5} />
+                      <text x={p.x + 10} y={p.y + 16} fontSize={10} fontFamily="'JetBrains Mono',monospace" fill={nodeColor(p.color)} fontWeight="500">
+                        {p.name.length > 20 ? p.name.slice(0, 19) + '…' : p.name}
+                      </text>
+                      <text x={p.x + 10} y={p.y + 30} fontSize={9} fontFamily="monospace" fill="rgba(255,255,255,0.35)">
+                        PID: {p.pid}  ·  {p.parent !== p.name ? p.parent : 'root'}
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+              </div>
+            );
+          })()}
+        </div>
       )}
 
     </Panel>

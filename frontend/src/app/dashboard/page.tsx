@@ -25,6 +25,7 @@ export default function Dashboard() {
   const [stageDone, setStageDone] = useState<boolean[]>(Array(6).fill(false));
   const [reportStages, setReportStages] = useState<ReportStages>({});
   const [staticData, setStaticData] = useState<StaticResult | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const animDoneRef = useRef(false);
   const apiDoneRef = useRef(false);
@@ -58,6 +59,7 @@ export default function Dashboard() {
           return r.json();
         })
         .then(({ job_id }: { job_id: string }) => {
+          setJobId(job_id);
           const wsBase = API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'));
           const ws = new WebSocket(`${wsBase}/ws/${job_id}`);
 
@@ -213,7 +215,7 @@ export default function Dashboard() {
         />
         <ThreatReportPanel stages={reportStages} />
         <SandboxSimulation />
-        <LinuxSandboxPanel staticData={staticData} />
+        <LinuxSandboxPanel staticData={staticData} jobId={jobId} />
       </div>
     </>
   );

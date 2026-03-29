@@ -31,9 +31,13 @@ import asyncio
 import hashlib
 import os
 import queue
+import re
+import sys
 import tempfile
 import threading
+import types as _types
 import uuid
+from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
@@ -51,6 +55,39 @@ if _agents_env.exists():
 
 from sandbox.analyze import analyze_file                           # noqa: E402
 from agents.pipeline import run_pipeline, enrich_with_virustotal   # noqa: E402
+
+# ── Optional e2b + Gemini (adaptive sandbox) ──────────────────────────────────
+# Mock heavy deps so the testing module can be imported without networkx/matplotlib
+for _mod in ("networkx", "matplotlib", "matplotlib.pyplot", "matplotlib.patches"):
+    sys.modules.setdefault(_mod, _types.ModuleType(_mod))
+
+_E2B_AVAILABLE = False
+_ask_gemini_for_patch = None
+_run_once = None
+_TAG_RULES: list = []
+_BASE_MOCK = "console.log('[SYSTEM] Bare sandbox started.');\n"
+_MAX_ITER = 50
+_STUCK_THRESH = 3
+_RUN_TIMEOUT = 45
+
+try:
+    _testing_dir = str(Path(__file__).parent / "testing")
+    if _testing_dir not in sys.path:
+        sys.path.insert(0, _testing_dir)
+    from e2b_adaptive_sandbox import (          # type: ignore[import]
+        ask_gemini_for_patch as _ask_gemini_for_patch,
+        run_once as _run_once,
+        BASE_WINDOWS_MOCK_CATCHALL_ONLY as _BASE_MOCK,
+        TAG_RULES as _TAG_RULES,
+        MAX_ITERATIONS as _MAX_ITER,
+        STUCK_THRESHOLD as _STUCK_THRESH,
+        RUN_TIMEOUT as _RUN_TIMEOUT,
+    )
+    from e2b_code_interpreter import Sandbox as _E2BSandbox  # type: ignore[import]
+    _E2B_AVAILABLE = True
+    print("[app] e2b adaptive sandbox available")
+except Exception as _e2b_import_err:
+    print(f"[app] e2b sandbox not available: {_e2b_import_err}")
 
 # Path to optional VirusTotal behavior dump — present during demos
 _VT_PATH = Path(__file__).parent / "malware_behavior.json"
@@ -74,8 +111,11 @@ app.add_middleware(
 if (_OUT / "_next").exists():
     app.mount("/_next", StaticFiles(directory=str(_OUT / "_next")), name="nextjs-chunks")
 
-# ── In-memory job registry ────────────────────────────────────────────────────
+# ── In-memory job registries ──────────────────────────────────────────────────
 _jobs: dict[str, queue.Queue] = {}
+_sandbox_jobs: dict[str, queue.Queue] = {}
+# filepath kept after main analysis so sandbox can use it (cleaned up by sandbox job)
+_sandbox_files: dict[str, str] = {}
 
 # ── Adapter: sandbox/analyze.py output → agents/pipeline.py input ────────────
 _EXT_TO_TYPE = {
@@ -182,10 +222,157 @@ def _run_job(job_id: str, filepath: str) -> None:
         emit({"event": "error", "status": "error", "message": str(exc)})
 
     finally:
+        # Keep file around so /sandbox/start/{job_id} can use it.
+        # The sandbox job (or GC) is responsible for deletion.
+        _sandbox_files[job_id] = filepath
+
+
+# ── Sandbox helpers ───────────────────────────────────────────────────────────
+
+def _classify_sandbox_line(msg: str) -> tuple[str, dict | None]:
+    """Classify a [MOCK...] log line → (tag, node) for the frontend graph."""
+    tag = "sys" if msg.startswith("[SYSTEM]") else "info"
+    node = None
+    for pattern, ntype, _color, _ in _TAG_RULES:
+        if pattern in msg:
+            label = msg.split("] ", 1)[-1].strip()[:30] if "] " in msg else msg[:30]
+            node = {"type": ntype, "label": label}
+            tag = "crit" if ntype in ("EXEC", "NETWORK") else "warn" if ntype in (
+                "REGISTRY", "FILE", "STREAM", "ACTIVEX", "WMI") else "info"
+            break
+    return tag, node
+
+
+def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> None:
+    """Adaptive e2b sandbox loop — runs in a daemon thread, emits JSON events."""
+    q = _sandbox_jobs[sandbox_job_id]
+
+    def emit(event: dict) -> None:
+        q.put(event)
+
+    def log(line: str, tag: str = "sys", node: dict | None = None) -> None:
+        emit({"event": "sandbox_log", "line": line, "tag": tag, "node": node})
+
+    if not _E2B_AVAILABLE:
+        log("[ERROR] e2b / Gemini not installed in this environment.", "crit")
+        emit({"event": "sandbox_done", "iterations": 0, "patch_file": None})
+        return
+
+    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY", "")
+    if not gemini_key:
+        log("[ERROR] GEMINI_API_KEY / GOOGLE_API_KEY not set.", "crit")
+        emit({"event": "sandbox_done", "iterations": 0, "patch_file": None})
+        return
+
+    # Timestamped patch file in testing/
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    testing_dir = Path(__file__).parent / "testing"
+    testing_dir.mkdir(exist_ok=True)
+    patches_path = testing_dir / f"patches_{timestamp}.js"
+
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as fh:
+            malware_js = fh.read()
+    except Exception as exc:
+        log(f"[ERROR] Cannot read malware file: {exc}", "crit")
+        emit({"event": "sandbox_done", "iterations": 0, "patch_file": None})
+        return
+
+    malware_name = Path(filepath).name
+    current_mock = _BASE_MOCK
+    patches_applied: list[str] = []
+    recent_error_hashes: list[str] = []
+
+    log("[SYSTEM] e2b sandbox — Ubuntu 22.04 LTS x86_64")
+    log(f"[SYSTEM] Mounting specimen → /home/user/{malware_name}")
+    log("[SYSTEM] node --require mock.js malware.js 2>&1")
+    log("[SYSTEM] Adaptive Simulation Layer Active.", "info")
+
+    try:
+        with _E2BSandbox.create() as sandbox:
+            for iteration in range(1, _MAX_ITER + 1):
+                log(f"[ADAPTIVE] Iteration {iteration} — running sandbox...", "sys")
+
+                events, clean, stderr_text = _run_once(sandbox, current_mock, malware_js)
+
+                for ev in events:
+                    if ev.get("type") == "STDOUT":
+                        msg = ev.get("data", "").strip()
+                        if not msg:
+                            continue
+                        if "[MOCK" in msg or "[WSCRIPT" in msg or "[SYSTEM" in msg:
+                            tag, node = _classify_sandbox_line(msg)
+                            log(msg, tag, node)
+
+                if clean:
+                    log(f"[ADAPTIVE] Clean exit on iteration {iteration}.", "info")
+                    break
+
+                if not stderr_text.strip():
+                    log("[ADAPTIVE] Non-zero exit, no stderr. Stopping.", "warn")
+                    break
+
+                mock_broke = "/home/user/mock.js" in stderr_text
+                error_lines = re.findall(
+                    r'(?:Reference|Type|Syntax|Range|URI|Eval)Error[^\n]*', stderr_text)
+                actual_error = (error_lines[0].strip() if error_lines
+                                else stderr_text.split("\n")[0][:200])
+
+                err_hash = hashlib.md5(actual_error.encode()).hexdigest()
+                recent_error_hashes.append(err_hash)
+                if (len(recent_error_hashes) >= _STUCK_THRESH
+                        and len(set(recent_error_hashes[-_STUCK_THRESH:])) == 1):
+                    log(f"[ADAPTIVE] Stuck on same error × {_STUCK_THRESH}. Stopping.", "warn")
+                    break
+
+                if iteration == _MAX_ITER:
+                    log("[ADAPTIVE] Safety cap reached. Stopping.", "warn")
+                    break
+
+                origin = "mock.js" if mock_broke else "malware.js"
+                log(f"[ADAPTIVE] Crash [{origin}]: {actual_error[:80]}", "crit")
+                log("[ADAPTIVE] Asking Gemini to generate patch...", "sys")
+
+                patch = _ask_gemini_for_patch(
+                    stderr_text, current_mock, iteration, mock_broke=mock_broke)
+                patches_applied.append(patch)
+                current_mock = (current_mock
+                                + f"\n\n// === AUTO-PATCH (iteration {iteration}) ===\n"
+                                + patch)
+
+                # Append patch to timestamped file immediately
+                with open(patches_path, "a", encoding="utf-8") as pf:
+                    pf.write(f"// === Patch {iteration} ===\n{patch}\n\n")
+
+                emit({
+                    "event": "sandbox_patch",
+                    "iteration": iteration,
+                    "line": (f"[ADAPTIVE] Patch {iteration} applied "
+                             f"({len(patch)} chars) → {patches_path.name}"),
+                    "tag": "info",
+                })
+
+    except Exception as exc:
+        log(f"[ADAPTIVE] Fatal sandbox error: {exc}", "crit")
+
+    finally:
+        # Clean up the kept file
+        _sandbox_files.pop(main_job_id, None)
         try:
             os.unlink(filepath)
         except OSError:
             pass
+
+    log(
+        f"[SYSTEM] ── simulation complete — {len(patches_applied)} patches"
+        + (f" → {patches_path.name}" if patches_applied else "") + " ──",
+        "info",
+    )
+    emit({
+        "event": "sandbox_done",
+        "iterations": len(patches_applied),
+        "patch_file": patches_path.name if patches_applied else None,
+    })
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
@@ -236,6 +423,56 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str) -> None:
         pass
     finally:
         _jobs.pop(job_id, None)
+
+
+@app.post("/sandbox/start/{job_id}")
+async def sandbox_start(job_id: str):
+    """Start an adaptive e2b sandbox run for a previously uploaded file."""
+    filepath = _sandbox_files.get(job_id)
+    if not filepath or not Path(filepath).exists():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="File not found for this job_id")
+
+    sandbox_job_id = str(uuid.uuid4())
+    _sandbox_jobs[sandbox_job_id] = queue.Queue()
+    threading.Thread(
+        target=_run_sandbox_job,
+        args=(sandbox_job_id, filepath, job_id),
+        daemon=True,
+    ).start()
+    return {"sandbox_job_id": sandbox_job_id, "e2b_available": _E2B_AVAILABLE}
+
+
+@app.websocket("/ws/sandbox/{sandbox_job_id}")
+async def sandbox_websocket(websocket: WebSocket, sandbox_job_id: str) -> None:
+    """Stream adaptive sandbox events to the client."""
+    await websocket.accept()
+
+    if sandbox_job_id not in _sandbox_jobs:
+        await websocket.send_json({"event": "sandbox_error", "message": "Unknown sandbox job ID"})
+        await websocket.close()
+        return
+
+    q = _sandbox_jobs[sandbox_job_id]
+    loop = asyncio.get_event_loop()
+
+    try:
+        while True:
+            try:
+                event = await loop.run_in_executor(None, lambda: q.get(timeout=600))
+            except queue.Empty:
+                await websocket.send_json(
+                    {"event": "sandbox_error", "message": "Sandbox timed out (600 s)"})
+                break
+
+            await websocket.send_json(event)
+            if event.get("event") in ("sandbox_done", "sandbox_error"):
+                break
+
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _sandbox_jobs.pop(sandbox_job_id, None)
 
 
 # ── Frontend routes ───────────────────────────────────────────────────────────

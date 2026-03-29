@@ -83,7 +83,7 @@ def run_mitre_mapping(ingestion_output: dict) -> dict:
     )
 
 def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -> dict:
-    print(f"Running Remediation Agent (attempt {attempt})...")
+    print(f"🛡️ Running Remediation Agent (attempt {attempt})...")
     result = call_claude(
         system_prompt="""You are a cybersecurity incident responder.
         Given malware analysis and MITRE techniques, provide:
@@ -101,11 +101,13 @@ def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -
             "confidence": 0.9,
             "needs_rerun": false
         }""",
-        user_message=f"Generate remediation for this malware. Static analysis: {json.dumps(static_output)}. MITRE techniques: {json.dumps(mitre_output)}"
+        user_message=f"""Generate remediation for this malware.
+        Static analysis: {json.dumps(static_output)}
+        MITRE techniques: {json.dumps(mitre_output)}
+        Use the MITRE techniques above directly — no need to look them up."""
     )
-    # Self-correction loop
     if result.get("needs_rerun") and attempt < 2:
-        print("Confidence low, rerunning remediation...")
+        print("⚠️ Confidence low, rerunning remediation...")
         return run_remediation(static_output, mitre_output, attempt + 1)
     return result
 

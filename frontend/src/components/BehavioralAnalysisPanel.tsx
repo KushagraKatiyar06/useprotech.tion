@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Panel from './Panel';
-import { ARCH_DETAILS, DEMO_CONNS, DEMO_LOGS, DEMO_PROCS, type LogEntry, type Connection, type Process } from '@/lib/data';
+import { DEMO_CONNS, DEMO_LOGS, DEMO_PROCS, type LogEntry, type Connection, type Process } from '@/lib/data';
 
 const STAGES = ['UPLOAD', 'SANDBOX', 'MONITOR', 'PARSE', 'AI ANALYZE', 'REPORT'];
 
@@ -120,8 +120,6 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone, stati
   ]);
   const [procs, setProcs] = useState<Process[]>([]);
   const [conns, setConns] = useState<Connection[]>([]);
-  const [archHighlight, setArchHighlight] = useState<number | null>(null);
-  const [archDetail, setArchDetail] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const netAnimRef = useRef<number>(0);
@@ -250,11 +248,6 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone, stati
     return () => cancelAnimationFrame(netAnimRef.current);
   }, [activeTab]);
 
-  function showArchDetail(i: number) {
-    setArchHighlight(i);
-    setArchDetail(ARCH_DETAILS[i]);
-  }
-
   function stageClass(i: number) {
     if (stageDone[i]) return 'stage done';
     if (currentStage === i) return 'stage active';
@@ -270,13 +263,13 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone, stati
       </div>
 
       <div className="tab-row">
-        {['process', 'logs', 'network', 'arch'].map(tab => (
+        {['process', 'logs', 'network'].map(tab => (
           <div
             key={tab}
             className={`tab ${activeTab === tab ? 'active' : ''}`}
             onClick={() => setActiveTab(tab)}
           >
-            {tab === 'process' ? 'IMPORTS' : tab === 'arch' ? 'ARCHITECTURE' : tab === 'network' ? 'NETWORK' : 'RAW LOGS'}
+            {tab === 'process' ? 'IMPORTS' : tab === 'network' ? 'NETWORK' : 'RAW LOGS'}
           </div>
         ))}
       </div>
@@ -339,88 +332,6 @@ export default function BehavioralAnalysisPanel({ currentStage, stageDone, stati
         </>
       )}
 
-      {activeTab === 'arch' && (
-        <>
-          <div style={{ marginBottom: 10 }}>
-            <div className="f9 text-dim">END-TO-END PIPELINE ARCHITECTURE</div>
-          </div>
-          <div className="arch-grid">
-            {[
-              { icon: '🌐', lbl: 'REACT FRONTEND',  sub: 'File upload · HUD UI' },
-              null,
-              { icon: '⚙️', lbl: 'FASTAPI BACKEND',  sub: 'REST API · Orchestration' },
-              null,
-              { icon: '📦', lbl: 'SANDBOX VM',        sub: 'VirtualBox · Isolated' },
-            ].map((node, i) =>
-              node ? (
-                <div
-                  key={i}
-                  className={`arch-node ${archHighlight === Math.floor(i / 2) ? 'highlight' : ''}`}
-                  onClick={() => showArchDetail(Math.floor(i / 2))}
-                >
-                  <span className="arch-icon">{node.icon}</span>
-                  <div className="arch-lbl">{node.lbl}</div>
-                  <div style={{ fontSize: 8, color: 'var(--text-dim)', marginTop: 3 }}>{node.sub}</div>
-                </div>
-              ) : (
-                <div key={i} className="arch-arrow">→</div>
-              )
-            )}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'center', margin: '2px 0' }}>
-            <span style={{ color: 'rgba(0,245,255,0.3)' }}>↓</span>
-          </div>
-          <div className="arch-grid">
-            {[
-              { icon: '📊', lbl: 'LOG COLLECTOR',  sub: 'Process · File · Net' },
-              null,
-              { icon: '🔄', lbl: 'PARSER/STRUCT',   sub: 'JSON normalization' },
-              null,
-              { icon: '🤖', lbl: 'CLAUDE AI',        sub: 'Analysis · Report gen' },
-            ].map((node, i) =>
-              node ? (
-                <div
-                  key={i}
-                  className={`arch-node ${archHighlight === 3 + Math.floor(i / 2) ? 'highlight' : ''}`}
-                  onClick={() => showArchDetail(3 + Math.floor(i / 2))}
-                >
-                  <span className="arch-icon">{node.icon}</span>
-                  <div className="arch-lbl">{node.lbl}</div>
-                  <div style={{ fontSize: 8, color: 'var(--text-dim)', marginTop: 3 }}>{node.sub}</div>
-                </div>
-              ) : (
-                <div key={i} className="arch-arrow">→</div>
-              )
-            )}
-          </div>
-
-          {archDetail && (
-            <div
-              style={{ marginTop: 14, padding: 10, border: '1px solid rgba(0,245,255,0.2)', background: '#010814', fontSize: 11, lineHeight: 1.7 }}
-              dangerouslySetInnerHTML={{ __html: archDetail }}
-            />
-          )}
-
-          <div className="section-divider" style={{ marginTop: 14 }} />
-          <div className="f9 text-dim">API CONTRACT EXAMPLE</div>
-          <pre style={{ fontSize: 10, color: 'var(--text-cyan)', background: '#010814', border: '1px solid rgba(0,245,255,0.1)', padding: 10, marginTop: 6, overflowX: 'auto', lineHeight: 1.6 }}>
-{`{
-  "file_id": "a3f8-...",
-  "behaviors": {
-    "processes": [{"name":"cmd.exe","pid":4821,"parent":"malware.exe"}],
-    "file_ops": [{"op":"CREATE","path":"C:\\\\temp\\\\payload.dll"}],
-    "network":  [{"dst":"185.220.101.x","port":443,"bytes":2048}]
-  },
-  "ai_report": {
-    "type": "RANSOMWARE",
-    "risk": 0.94,
-    "confidence": "HIGH",
-    "mitigations": ["Isolate host","Block C2 IP","Restore backup"]
-  }
-}`}
-          </pre>
-        </>
-      )}
     </Panel>
   );
 }

@@ -16,11 +16,19 @@ interface Props {
   onAnalyze: () => void;
   analysisRunning: boolean;
   fileInfo: FileInfo | null;
+  variant?: 'dashboard' | 'landing';
 }
 
-export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunning, fileInfo }: Props) {
+export default function FileIntakePanel({
+  onFileLoaded,
+  onAnalyze,
+  analysisRunning,
+  fileInfo,
+  variant = 'dashboard',
+}: Props) {
   const [dragOver, setDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const isLanding = variant === 'landing';
 
   function processFile(f: File) {
     const ext = f.name.split('.').pop()?.toUpperCase() ?? 'UNK';
@@ -50,8 +58,8 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
     });
   }
 
-  return (
-    <Panel title="// FILE INTAKE" style={{ gridColumn: 1, gridRow: 1 }}>
+  const uploadContent = (
+    <>
       <div
         className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
         onClick={() => inputRef.current?.click()}
@@ -70,7 +78,7 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
           </svg>
         </div>
         <div className="upload-text">DROP SUSPICIOUS FILE<br />OR CLICK TO UPLOAD</div>
-        <div className="upload-subtext">.EXE · .DLL · .BAT · .PS1 · .MSI</div>
+        <div className="upload-subtext">.EXE / .DLL / .BAT / .PS1 / .MSI</div>
       </div>
       <input ref={inputRef} type="file" style={{ display: 'none' }} onChange={handleChange} />
 
@@ -105,10 +113,20 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
         onClick={onAnalyze}
         disabled={!fileInfo || analysisRunning}
       >
-        ▶ INITIATE ANALYSIS
+        INITIATE ANALYSIS
       </button>
+    </>
+  );
+
+  if (isLanding) {
+    return <div className="landing-upload-shell">{uploadContent}</div>;
+  }
+
+  return (
+    <Panel title="// FILE INTAKE" style={{ gridColumn: 1, gridRow: 1 }}>
+      {uploadContent}
       <button className="hud-btn cyan-btn mt4" onClick={loadDemo}>
-        ⚡ LOAD DEMO SPECIMEN
+        LOAD DEMO SPECIMEN
       </button>
 
       <div className="section-divider" style={{ marginTop: 14 }} />

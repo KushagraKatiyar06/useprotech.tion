@@ -1,11 +1,12 @@
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Header from '@/components/Header';
 import FileIntakePanel, { type FileInfo } from '@/components/FileIntakePanel';
 import BehavioralAnalysisPanel, { type StaticResult } from '@/components/BehavioralAnalysisPanel';
 import ThreatReportPanel, { type ReportData } from '@/components/ThreatReportPanel';
 import SandboxSimulation from '@/components/SandboxSimulation';
+import { consumePendingFileInfo } from '@/lib/analysisSession';
 
 const STAGE_DURATIONS = [800, 1500, 2500, 1000, 2000, 800];
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -19,6 +20,7 @@ export default function Dashboard() {
   const [reportData, setReportData] = useState<ReportData | null>(null);
   const [staticData, setStaticData] = useState<StaticResult | null>(null);
   const [reportPending, setReportPending] = useState(false);
+  const [autoAnalyze, setAutoAnalyze] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const animDoneRef = useRef(false);
   const apiDoneRef = useRef(false);
@@ -85,7 +87,11 @@ export default function Dashboard() {
 
       if (idx === 5) {
         setTimeout(() => {
-          setStageDone(prev => { const n = [...prev]; n[5] = true; return n; });
+          setStageDone(prev => {
+            const next = [...prev];
+            next[5] = true;
+            return next;
+          });
           animDoneRef.current = true;
 
           if (apiDoneRef.current) {
@@ -108,8 +114,27 @@ export default function Dashboard() {
     }
 
     nextStage();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysisRunning, fileInfo]);
+
+  useEffect(() => {
+    const pendingFileInfo = consumePendingFileInfo();
+    if (pendingFileInfo) {
+      setFileInfo(pendingFileInfo);
+      setAutoAnalyze(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!autoAnalyze || !fileInfo || analysisRunning) return;
+    setAutoAnalyze(false);
+    startAnalysis();
+  }, [autoAnalyze, fileInfo, analysisRunning, startAnalysis]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   return (
     <>

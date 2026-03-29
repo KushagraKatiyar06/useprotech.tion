@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import time
 import anthropic
 from dotenv import load_dotenv
@@ -24,6 +25,49 @@ def call_claude(system_prompt: str, user_message: str) -> dict:
         if text.startswith("json"):
             text = text[4:]
     return json.loads(text.strip())
+
+def enrich_with_virustotal(vt_json_path: str) -> dict:
+    """Read a VirusTotal behavior JSON and extract enrichment fields.
+
+    Returns a dict with:
+      verdict_labels    – e.g. ["AgentTesla", "AgentTesla.v4"]
+      mitre_techniques  – deduplicated list of {id, description, severity}
+      dns_hostnames     – contacted domains
+      files_dropped     – list of {sha256, path?, type?}
+      ip_addresses      – unique destination IPs
+      processes_created – command-line strings (truncated to 300 chars each)
+      registry_keys_set – list of registry key strings
+    """
+    with open(vt_json_path, encoding="utf-8") as fh:
+        raw = json.load(fh)
+    data = raw.get("data", {})
+
+    # MITRE — deduplicate on ID, keep first description seen per ID
+    seen_ids: set = set()
+    mitre: list = []
+    for t in data.get("mitre_attack_techniques", []):
+        tid = t.get("id", "")
+        if tid and tid not in seen_ids:
+            seen_ids.add(tid)
+            mitre.append({
+                "id":          tid,
+                "description": t.get("signature_description", ""),
+                "severity":    t.get("severity", ""),
+            })
+
+    # Processes — truncate long PowerShell blobs so they don't blow the token budget
+    processes = [p[:300] + ("…" if len(p) > 300 else "") for p in data.get("processes_created", [])]
+
+    return {
+        "verdict_labels":    data.get("verdict_labels", []),
+        "mitre_techniques":  mitre,
+        "dns_hostnames":     [e["hostname"] for e in data.get("dns_lookups", []) if "hostname" in e],
+        "files_dropped":     data.get("files_dropped", []),
+        "ip_addresses":      list({e["destination_ip"] for e in data.get("ip_traffic", []) if "destination_ip" in e}),
+        "processes_created": processes,
+        "registry_keys_set": [e["key"] for e in data.get("registry_keys_set", []) if "key" in e],
+    }
+
 
 def run_ingestion(file_metadata: dict) -> dict:
     print("Running Ingestion Agent...")
@@ -131,13 +175,40 @@ def run_report(ingestion: dict, static: dict, mitre: dict, remediation: dict) ->
         user_message=f"Generate final threat report. Ingestion: {json.dumps(ingestion)}. Static: {json.dumps(static)}. MITRE: {json.dumps(mitre)}. Remediation: {json.dumps(remediation)}"
     )
 
-def run_pipeline(file_metadata: dict, progress_cb=None):
+def run_pipeline(file_metadata: dict, progress_cb=None, vt_data: dict | None = None):
     """Run the full analysis pipeline.
 
     progress_cb, if provided, is called with a dict at each stage transition:
       {"event": str, "status": "running"|"complete", "data": dict|None, "message": str|None}
+
+    vt_data, if provided (from enrich_with_virustotal), is merged into the metadata so all
+    five Claude agents receive the real VirusTotal behavioral context.
     """
     import concurrent.futures
+
+    # ── Merge VirusTotal enrichment ──────────────────────────────────────────
+    if vt_data:
+        file_metadata = dict(file_metadata)  # don't mutate caller's dict
+
+        # Embed the full VT context so agents can reference it
+        file_metadata["vt_enrichment"] = vt_data
+
+        # Also surface the most actionable IOCs into raw_indicators so the
+        # ingestion agent flags them immediately
+        existing = set(file_metadata.get("raw_indicators", []))
+        extra: list[str] = (
+            vt_data.get("verdict_labels", [])
+            + vt_data.get("dns_hostnames", [])
+            + vt_data.get("ip_addresses", [])
+            + vt_data.get("registry_keys_set", [])
+            + vt_data.get("processes_created", [])
+        )
+        augmented = list(file_metadata.get("raw_indicators", []))
+        for item in extra:
+            if item and item not in existing:
+                existing.add(item)
+                augmented.append(item)
+        file_metadata["raw_indicators"] = augmented[:50]  # cap to avoid token overflow
 
     def emit(event: str, status: str, data=None, message: str = None):
         if progress_cb:

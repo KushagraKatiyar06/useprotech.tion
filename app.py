@@ -49,8 +49,11 @@ _agents_env = Path(__file__).parent / "agents" / ".env"
 if _agents_env.exists():
     load_dotenv(_agents_env, override=False)
 
-from sandbox.analyze import analyze_file   # noqa: E402
-from agents.pipeline import run_pipeline   # noqa: E402
+from sandbox.analyze import analyze_file                           # noqa: E402
+from agents.pipeline import run_pipeline, enrich_with_virustotal   # noqa: E402
+
+# Path to optional VirusTotal behavior dump — present during demos
+_VT_PATH = Path(__file__).parent / "malware_behavior.json"
 
 # ── Frontend paths ────────────────────────────────────────────────────────────
 _OUT = Path(__file__).parent / "frontend" / "out"
@@ -144,12 +147,32 @@ def _run_job(job_id: str, filepath: str) -> None:
 
         # Hand off to Claude pipeline
         metadata = _build_pipeline_input(filepath, analysis)
-        emit({"event": "pipeline_start", "status": "running",
-              "message": "Static analysis complete — starting AI agent pipeline...",
-              "data": metadata})
+
+        # Optional VirusTotal enrichment — load malware_behavior.json if present
+        vt_data = None
+        if _VT_PATH.exists():
+            try:
+                vt_data = enrich_with_virustotal(str(_VT_PATH))
+                vt_labels = vt_data.get("verdict_labels", [])
+                vt_mitre_count = len(vt_data.get("mitre_techniques", []))
+                emit({"event": "pipeline_start", "status": "running",
+                      "message": (
+                          f"VirusTotal enrichment loaded — {vt_labels} "
+                          f"({vt_mitre_count} MITRE techniques). Starting AI pipeline..."
+                      ),
+                      "data": metadata})
+            except Exception as vt_exc:
+                vt_data = None
+                emit({"event": "pipeline_start", "status": "running",
+                      "message": f"Static analysis complete — starting AI agent pipeline... (VT load failed: {vt_exc})",
+                      "data": metadata})
+        else:
+            emit({"event": "pipeline_start", "status": "running",
+                  "message": "Static analysis complete — starting AI agent pipeline...",
+                  "data": metadata})
 
         # Stages 1-4 — Claude agents (progress_cb forwards events directly)
-        result = run_pipeline(metadata, progress_cb=emit)
+        result = run_pipeline(metadata, progress_cb=emit, vt_data=vt_data)
 
         emit({"event": "done", "status": "complete", "data": result})
 

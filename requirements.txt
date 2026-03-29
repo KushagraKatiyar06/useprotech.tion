@@ -7,3 +7,15 @@ jsbeautifier
 fastapi>=0.100.0
 uvicorn[standard]>=0.20.0
 python-multipart>=0.0.6
+
+
+
+e2b_code_interpreter
+python-dotenv
+networkx
+matplotlib
+scipy
+google-generativeai
+google-genai
+cryptography
+requests

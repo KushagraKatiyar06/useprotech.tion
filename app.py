@@ -31,12 +31,10 @@ import asyncio
 import hashlib
 import os
 import queue
-import sys
 import tempfile
 import threading
 import uuid
 from pathlib import Path
-
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,13 +49,11 @@ _agents_env = Path(__file__).parent / "agents" / ".env"
 if _agents_env.exists():
     load_dotenv(_agents_env, override=False)
 
-# ── Python path: expose sandbox/analyze.py ───────────────────────────────────
-_sandbox_path = str(Path(__file__).parent / "sandbox")
-if _sandbox_path not in sys.path:
-    sys.path.insert(0, _sandbox_path)
+from sandbox.analyze import analyze_file                           # noqa: E402
+from agents.pipeline import run_pipeline, enrich_with_virustotal   # noqa: E402
 
-from analyze import analyze_js          # noqa: E402  (sandbox/analyze.py)
-from agents.pipeline import run_pipeline  # noqa: E402
+# Path to optional VirusTotal behavior dump — present during demos
+_VT_PATH = Path(__file__).parent / "malware_behavior.json"
 
 # ── Frontend paths ────────────────────────────────────────────────────────────
 _OUT = Path(__file__).parent / "frontend" / "out"
@@ -68,7 +64,7 @@ app = FastAPI(title="UseProtection API", docs_url="/api/docs")
 # CORS — allow the Next.js dev server (port 3000) during development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -95,7 +91,7 @@ _EXT_TO_TYPE = {
 
 
 def _build_pipeline_input(filepath: str, analysis: dict) -> dict:
-    """Map analyze_js() output to the dict expected by run_pipeline()."""
+    """Map analyze_file() output to the dict expected by run_pipeline()."""
     name = Path(filepath).name
     size_kb = round(Path(filepath).stat().st_size / 1024, 2)
 
@@ -130,12 +126,14 @@ def _run_job(job_id: str, filepath: str) -> None:
 
     def emit(event: dict) -> None:
         q.put(event)
+        print(f"[queue PUT] job={job_id[:8]} event={event.get('event')!r}"
+              f"{' stage=' + str(event.get('stage')) if 'stage' in event else ''}")
 
     try:
         # Stage 0 — static analysis (sandbox/analyze.py)
         emit({"event": "static_analysis", "status": "running",
               "message": "Running static analysis (deobfuscation + IOC extraction)..."})
-        analysis = analyze_js(filepath)
+        analysis = analyze_file(filepath)
         emit({"event": "static_analysis", "status": "complete", "data": {
             "threat_level":        analysis.get("threat_level", "UNKNOWN"),
             "is_obfuscated":       analysis.get("is_obfuscated", False),
@@ -151,12 +149,32 @@ def _run_job(job_id: str, filepath: str) -> None:
 
         # Hand off to Claude pipeline
         metadata = _build_pipeline_input(filepath, analysis)
-        emit({"event": "pipeline_start", "status": "running",
-              "message": "Static analysis complete — starting AI agent pipeline...",
-              "data": metadata})
+
+        # Optional VirusTotal enrichment — load malware_behavior.json if present
+        vt_data = None
+        if _VT_PATH.exists():
+            try:
+                vt_data = enrich_with_virustotal(str(_VT_PATH))
+                vt_labels = vt_data.get("verdict_labels", [])
+                vt_mitre_count = len(vt_data.get("mitre_techniques", []))
+                emit({"event": "pipeline_start", "status": "running",
+                      "message": (
+                          f"VirusTotal enrichment loaded — {vt_labels} "
+                          f"({vt_mitre_count} MITRE techniques). Starting AI pipeline..."
+                      ),
+                      "data": metadata})
+            except Exception as vt_exc:
+                vt_data = None
+                emit({"event": "pipeline_start", "status": "running",
+                      "message": f"Static analysis complete — starting AI agent pipeline... (VT load failed: {vt_exc})",
+                      "data": metadata})
+        else:
+            emit({"event": "pipeline_start", "status": "running",
+                  "message": "Static analysis complete — starting AI agent pipeline...",
+                  "data": metadata})
 
         # Stages 1-4 — Claude agents (progress_cb forwards events directly)
-        result = run_pipeline(metadata, progress_cb=emit)
+        result = run_pipeline(metadata, progress_cb=emit, vt_data=vt_data)
 
         emit({"event": "done", "status": "complete", "data": result})
 
@@ -207,8 +225,11 @@ async def websocket_endpoint(websocket: WebSocket, job_id: str) -> None:
                     {"event": "error", "message": "Analysis timed out (300 s)"})
                 break
 
+            ename = event.get("event")
+            print(f"[ws SEND]  job={job_id[:8]} event={ename!r}"
+                  f"{' stage=' + str(event.get('stage')) if 'stage' in event else ''}")
             await websocket.send_json(event)
-            if event.get("event") in ("done", "error"):
+            if ename in ("done", "error"):
                 break
 
     except WebSocketDisconnect:

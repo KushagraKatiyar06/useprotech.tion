@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Courier+Prime:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+
+
+
+:root {
+  --cyan: #39FF14;
+  --magenta: #rgba;
+  --blue-dark: #000000;
+  --blue-mid: #000000;
+  --blue-panel: #000000;
+  --cyan-dim: rgba(0,245,255,0.15);
+  --magenta-dim: rgba(255,45,158,0.15);
+  --cyan-glow: 0 0 12px rgba(0,245,255,0.6), 0 0 24px rgba(0,245,255,0.2);
+  --mag-glow: 0 0 12px rgba(255,45,158,0.6), 0 0 24px rgba(255,45,158,0.2);
+  --text-cyan: #a0f8ff;
+  --text-dim: #3a6080;
+}
+
+* { 
+  margin: 0; 
+  padding: 0; 
+  box-sizing: border-box; 
+  font-family: 'Courier Prime', 'Courier New', monospace !important;
+  text-transform: uppercase !important;
+}
+
+body {
+  background: var(--blue-dark);
+  color: var(--text-cyan);
+  overflow-x: hidden;
+  min-height: 100vh;
+  /* 'RNDL' 0 is the "secret sauce" that makes the dots SQUARE */
+  font-variation-settings: 'RNDL' 0;
+  /* Weight 800-900 makes it thick like your image */
+  font-weight: 800; 
+  letter-spacing: 1px;
+}
+
+/* Scanline overlay */
+body::before {
+  content: '';
+  position: fixed;
+  top:0; left:0; right:0; bottom:0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,245,255,0.015) 2px,
+    rgba(0,245,255,0.015) 4px
+  );
+  pointer-events: none;
+  z-index: 999;
+}
+
+/* HEADER */
+.hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  border-bottom: 1px solid rgba(0,245,255,0.25);
+  background: rgba(6,14,48,0.95);
+  position: sticky; top: 0; z-index: 100;
+}
+.hud-logo {
+  font-family: 'Orbitron', monospace;
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--cyan);
+  text-shadow: var(--cyan-glow);
+  letter-spacing: 3px;
+}
+.hud-logo span { color: var(--magenta); text-shadow: var(--mag-glow); }
+.hud-status-row {
+  display: flex; gap: 20px; align-items: center;
+}
+.status-pill {
+  font-size: 10px;
+  letter-spacing: 2px;
+  padding: 4px 10px;
+  border: 1px solid;
+  border-radius: 2px;
+  animation: pulse-border 2s ease-in-out infinite;
+}
+.status-pill.online { color: #00ff88; border-color: rgba(0,255,136,0.5); background: rgba(0,255,136,0.08); }
+.status-pill.armed  { color: var(--magenta); border-color: rgba(255,45,158,0.5); background: var(--magenta-dim); }
+@keyframes pulse-border { 0%,100%{opacity:1} 50%{opacity:0.55} }
+
+.hud-clock {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+}
+
+/* MAIN GRID */
+.main-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr 260px;
+  grid-template-rows: auto auto;
+  gap: 10px;
+  padding: 10px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* PANEL BASE */
+.panel {
+  border: 1px solid rgba(0,245,255,0.2);
+  background: rgba(6,14,48,0.85);
+  position: relative;
+  padding: 14px;
+}
+.panel::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0.4;
+}
+.panel-corner {
+  position: absolute;
+  width: 10px; height: 10px;
+}
+.panel-corner.tl { top:-1px; left:-1px; border-top: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+.panel-corner.tr { top:-1px; right:-1px; border-top: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+.panel-corner.bl { bottom:-1px; left:-1px; border-bottom: 2px solid var(--cyan); border-left: 2px solid var(--cyan); }
+.panel-corner.br { bottom:-1px; right:-1px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+
+.panel-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--magenta);
+  text-shadow: var(--mag-glow);
+  margin-bottom: 12px;
+  text-transform: uppercase;
+}
+
+/* LEFT PANEL — Upload */
+.upload-zone {
+  border: 1px dashed rgba(0,245,255,0.35);
+  padding: 22px 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+  margin-bottom: 12px;
+}
+.upload-zone:hover { border-color: var(--cyan); background: var(--cyan-dim); }
+.upload-zone.drag-over { border-color: var(--magenta); background: var(--magenta-dim); }
+.upload-icon {
+  width: 40px; height: 40px;
+  margin: 0 auto 10px;
+  position: relative;
+}
+.upload-icon svg { width:100%; height:100%; }
+.upload-text { font-size: 11px; color: var(--text-cyan); line-height: 1.6; }
+.upload-subtext { font-size: 9px; color: var(--text-dim); margin-top: 4px; letter-spacing: 1px; }
+
+.file-input { display:none; }
+
+.threat-level-display {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  margin: 10px 0;
+}
+.threat-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--text-dim);
+  position: relative;
+  overflow: hidden;
+}
+.threat-bar.filled { background: var(--magenta); box-shadow: 0 0 6px var(--magenta); }
+.threat-label { font-size: 9px; letter-spacing: 2px; color: var(--text-dim); }
+
+.hud-btn {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  background: transparent;
+  border: 1px solid var(--magenta);
+  color: var(--magenta);
+  font-family: 'Orbitron', monospace;
+  font-size: 10px;
+  letter-spacing: 3px;
+  cursor: pointer;
+  text-transform: uppercase;
+  transition: all 0.2s;
+  position: relative;
+  overflow: hidden;
+  margin-top: 10px;
+}
+.hud-btn::before {
+  content: '';
+  position: absolute;
+  top: 0; left: -100%;
+  width: 100%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,45,158,0.2), transparent);
+  transition: left 0.4s;
+}
+.hud-btn:hover::before { left: 100%; }
+.hud-btn:hover { background: var(--magenta-dim); box-shadow: var(--mag-glow); }
+.hud-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.hud-btn.cyan-btn {
+  border-color: var(--cyan);
+  color: var(--cyan);
+}
+.hud-btn.cyan-btn::before {
+  background: linear-gradient(90deg, transparent, rgba(0,245,255,0.2), transparent);
+}
+.hud-btn.cyan-btn:hover { background: var(--cyan-dim); box-shadow: var(--cyan-glow); }
+
+/* Mini stat row */
+.stat-row { display: flex; gap: 8px; margin: 8px 0; }
+.mini-stat {
+  flex: 1;
+  border: 1px solid rgba(0,245,255,0.15);
+  padding: 8px;
+  text-align: center;
+}
+.mini-stat-val { font-family: 'Orbitron', monospace; font-size: 16px; color: var(--cyan); text-shadow: var(--cyan-glow); }
+.mini-stat-lbl { font-size: 8px; letter-spacing: 1px; color: var(--text-dim); margin-top: 3px; }
+
+/* CENTER — Main analysis area */
+.center-panel { grid-column: 2; }
+
+/* Tabs */
+.tab-row { display: flex; gap: 4px; margin-bottom: 12px; }
+.tab {
+  padding: 6px 14px;
+  font-family: 'Orbitron', monospace;
+  font-size: 9px;
+  letter-spacing: 2px;
+  cursor: pointer;
+  border: 1px solid rgba(0,245,255,0.15);
+  color: var(--text-dim);
+  background: transparent;
+  transition: all 0.2s;
+  text-transform: uppercase;
+}
+.tab.active { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); text-shadow: var(--cyan-glow); }
+.tab:hover:not(.active) { border-color: rgba(0,245,255,0.3); color: var(--text-cyan); }
+
+/* Tab content */
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* RADAR/SANDBOX display */
+.sandbox-viewport {
+  position: relative;
+  background: #020a1e;
+  border: 1px solid rgba(0,245,255,0.2);
+  overflow: hidden;
+  height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.hud-circle {
+  position: absolute;
+  border-radius: 50%;
+  border: 1px solid rgba(0,245,255,0.12);
+}
+
+/* Process tree */
+.proc-list { font-size: 11px; line-height: 1.8; }
+.proc-item { 
+  display: flex; align-items: center; gap: 8px; 
+  padding: 5px 8px;
+  border-left: 2px solid transparent;
+  transition: all 0.1s;
+}
+.proc-item:hover { background: var(--cyan-dim); border-left-color: var(--cyan); }
+.proc-item.danger { border-left-color: var(--magenta); }
+.proc-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.proc-dot.green  { background: #00ff88; box-shadow: 0 0 6px #00ff88; }
+.proc-dot.yellow { background: #ffcc00; box-shadow: 0 0 6px #ffcc00; }
+.proc-dot.red    { background: var(--magenta); box-shadow: 0 0 6px var(--magenta); }
+.proc-name { color: var(--text-cyan); flex: 1; }
+.proc-pid  { color: var(--text-dim); font-size: 10px; }
+.proc-mem  { color: var(--text-dim); font-size: 10px; }
+
+/* Log terminal */
+.log-terminal {
+  background: #010814;
+  border: 1px solid rgba(0,245,255,0.15);
+  padding: 12px;
+  height: 260px;
+  overflow-y: auto;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.log-line { display: flex; gap: 10px; }
+.log-ts   { color: var(--text-dim); flex-shrink: 0; }
+.log-tag  { padding: 0 5px; border-radius: 2px; font-size: 9px; letter-spacing: 1px; flex-shrink: 0; }
+.log-tag.info { background: rgba(0,245,255,0.15); color: var(--cyan); }
+.log-tag.warn { background: rgba(255,204,0,0.15); color: #ffcc00; }
+.log-tag.crit { background: rgba(255,45,158,0.2); color: var(--magenta); }
+.log-msg  { color: var(--text-cyan); word-break: break-all; }
+
+/* Network graph */
+.net-canvas { width:100%; height: 260px; display:block; background: #010814; border: 1px solid rgba(0,245,255,0.15); }
+
+/* RIGHT PANEL — AI Report */
+.ai-panel { grid-column: 3; }
+
+.risk-gauge {
+  width: 100%;
+  height: 8px;
+  background: rgba(0,245,255,0.1);
+  border: 1px solid rgba(0,245,255,0.2);
+  margin: 6px 0;
+  position: relative;
+  overflow: hidden;
+}
+.risk-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00ff88, #ffcc00, var(--magenta));
+  width: 0%;
+  transition: width 1.5s ease;
+  position: relative;
+}
+.risk-fill::after {
+  content: '';
+  position: absolute;
+  right: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: white;
+  box-shadow: 0 0 8px white;
+}
+
+.ai-finding {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 2px solid rgba(0,245,255,0.3);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-cyan);
+}
+.ai-finding.critical { border-left-color: var(--magenta); }
+.ai-finding.warn     { border-left-color: #ffcc00; }
+.ai-finding.ok       { border-left-color: #00ff88; }
+.finding-label {
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  margin-bottom: 3px;
+}
+.finding-label.critical { color: var(--magenta); }
+.finding-label.warn     { color: #ffcc00; }
+.finding-label.ok       { color: #00ff88; }
+
+.malware-type-badge {
+  display: inline-block;
+  padding: 5px 12px;
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  letter-spacing: 2px;
+  border: 1px solid var(--magenta);
+  color: var(--magenta);
+  background: var(--magenta-dim);
+  margin: 8px 0;
+  animation: pulse-border 1.5s infinite;
+}
+
+.confidence-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: var(--text-dim);
+  margin: 4px 0;
+}
+.confidence-val {
+  font-family: 'Orbitron', monospace;
+  color: var(--cyan);
+  font-size: 12px;
+}
+
+/* SIMULATION PANEL — bottom center */
+.sim-panel {
+  grid-column: 1 / -1;
+  margin-top: 4px;
+}
+.sim-screen {
+  background: #000d1f;
+  border: 1px solid rgba(0,245,255,0.2);
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px;
+  background: rgba(0,245,255,0.08);
+}
+.sim-pane {
+  background: #000d1f;
+  padding: 14px;
+  position: relative;
+  min-height: 220px;
+}
+
+/* Windows desktop sim */
+.fake-desktop {
+  background: #1e3a5f;
+  height: 100%;
+  min-height: 190px;
+  position: relative;
+  border: 1px solid rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+.fake-taskbar {
+  position: absolute; bottom: 0; left: 0; right: 0;
+  height: 28px;
+  background: rgba(10,20,50,0.95);
+  border-top: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 6px;
+}
+.fake-start { 
+  width: 40px; height: 18px;
+  background: rgba(0,120,215,0.8);
+  border-radius: 2px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 8px; color: white; letter-spacing: 1px;
+}
+.fake-clock { margin-left: auto; font-size: 9px; color: rgba(255,255,255,0.7); }
+
+.ransomware-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,0.0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: background 0.5s;
+}
+.ransom-msg {
+  background: #1a0000;
+  border: 2px solid var(--magenta);
+  padding: 12px 16px;
+  text-align: center;
+  opacity: 0;
+  transform: scale(0.8);
+  transition: all 0.4s;
+  max-width: 180px;
+}
+.ransom-msg.show { opacity: 1; transform: scale(1); }
+.ransom-title { font-family: 'Orbitron', monospace; font-size: 11px; color: var(--magenta); text-shadow: var(--mag-glow); letter-spacing: 2px; margin-bottom: 6px; }
+.ransom-body  { font-size: 9px; color: #ff8888; line-height: 1.5; }
+
+/* File system sim */
+.fs-tree { font-size: 10px; line-height: 1.8; }
+.fs-dir  { color: var(--cyan); }
+.fs-file { color: var(--text-dim); padding-left: 16px; }
+.fs-file.infected { color: var(--magenta); animation: flicker 0.4s infinite; }
+.fs-file.encrypted { color: #ff8888; }
+@keyframes flicker { 0%,100%{opacity:1} 50%{opacity:0.5} }
+
+/* Network traffic sim */
+.net-traffic { height: 180px; position: relative; overflow: hidden; background: #00060f; border: 1px solid rgba(0,245,255,0.1); }
+.packet {
+  position: absolute;
+  width: 8px; height: 3px;
+  border-radius: 2px;
+  transform: translateY(-50%);
+  animation: travel linear forwards;
+}
+@keyframes travel { from{left:0%} to{left:100%} }
+.packet.outbound { background: var(--magenta); box-shadow: 0 0 6px var(--magenta); }
+.packet.inbound  { background: #00ff88; box-shadow: 0 0 6px #00ff88; animation-direction: reverse; }
+.packet.dns      { background: #ffcc00; box-shadow: 0 0 6px #ffcc00; }
+
+.ip-label { font-size: 9px; color: var(--text-dim); position: absolute; }
+
+/* Simulation controls */
+.sim-controls {
+  display: flex;
+  gap: 8px;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(0,245,255,0.1);
+  background: #020a1e;
+  align-items: center;
+}
+.sim-progress-outer {
+  flex: 1;
+  height: 6px;
+  background: rgba(0,245,255,0.1);
+  border: 1px solid rgba(0,245,255,0.2);
+  position: relative;
+  overflow: hidden;
+}
+.sim-progress-inner {
+  height: 100%;
+  background: var(--cyan);
+  width: 0%;
+  transition: width 0.3s;
+  box-shadow: 0 0 8px var(--cyan);
+}
+.sim-label { font-size: 10px; color: var(--text-dim); letter-spacing: 1px; }
+
+/* ARCH DIAGRAM */
+.arch-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.arch-node {
+  border: 1px solid rgba(0,245,255,0.3);
+  padding: 10px 6px;
+  text-align: center;
+  position: relative;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.arch-node:hover { border-color: var(--cyan); background: var(--cyan-dim); }
+.arch-node.highlight { border-color: var(--magenta); background: var(--magenta-dim); }
+.arch-icon { font-size: 18px; margin-bottom: 4px; display: block; }
+.arch-lbl { font-size: 8px; letter-spacing: 1px; color: var(--text-cyan); }
+.arch-arrow {
+  text-align: center;
+  color: rgba(0,245,255,0.4);
+  font-size: 16px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(0,245,255,0.3); border-radius: 2px; }
+
+/* Blink cursor */
+.blink { animation: blink 1s step-end infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* Grid lines decorative */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(0,245,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,245,255,0.03) 1px, transparent 1px);
+  background-size: 30px 30px;
+}
+
+.section-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0,245,255,0.3), rgba(255,45,158,0.3), transparent);
+  margin: 12px 0;
+}
+
+/* Typewriter text */
+.typewriter { overflow: hidden; white-space: nowrap; }
+
+/* Hexagon decorative bits */
+.hex-row { display: flex; gap: 4px; margin: 6px 0; }
+.hex {
+  width: 12px; height: 12px;
+  background: rgba(0,245,255,0.1);
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+.hex.active { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+.hex.danger { background: var(--magenta); box-shadow: 0 0 6px var(--magenta); }
+
+.text-cyan { color: var(--cyan); }
+.text-mag  { color: var(--magenta); }
+.text-dim  { color: var(--text-dim); }
+.text-green { color: #00ff88; }
+.text-yellow { color: #ffcc00; }
+
+.mt4  { margin-top:4px; }
+.mt8  { margin-top:8px; }
+.mt12 { margin-top:12px; }
+.f10  { font-size:10px; }
+.f9   { font-size:9px; letter-spacing:1px; }
+
+/* Analysis stage indicator */
+.stages {
+  display: flex;
+  gap: 0;
+  margin: 12px 0;
+  font-size: 8px;
+  letter-spacing: 1px;
+}
+.stage {
+  flex: 1;
+  text-align: center;
+  padding: 6px 4px;
+  border: 1px solid rgba(0,245,255,0.15);
+  color: var(--text-dim);
+  position: relative;
+  transition: all 0.3s;
+}
+.stage.done { border-color: #00ff88; color: #00ff88; background: rgba(0,255,136,0.06); }
+.stage.active { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+.stage.warn { border-color: var(--magenta); color: var(--magenta); background: var(--magenta-dim); animation: pulse-border 1s infinite; }
+
+</style>
+</head>
+<body class="grid-bg">
+
+<!-- HEADER -->
+<div class="hud-header">
+  <div class="use-protection-tech">Use-<span>Protection-</span>Tech</div>
+  <div class="hud-status-row">
+    <div class="status-pill online">● SANDBOX ONLINE</div>
+    <div class="status-pill armed">◆ AI ARMED</div>
+    <div class="hud-clock" id="clock">--:--:-- UTC</div>
+  </div>
+</div>
+
+<!-- MAIN GRID -->
+<div class="main-grid">
+
+  <!-- LEFT: Upload & metadata -->
+  <div class="panel" style="grid-column:1; grid-row:1">
+    <div class="panel-corner tl"></div><div class="panel-corner tr"></div>
+    <div class="panel-corner bl"></div><div class="panel-corner br"></div>
+    <div class="panel-title">// FILE INTAKE</div>
+
+    <div class="upload-zone" id="dropZone" onclick="document.getElementById('fileInput').click()" ondragover="ev.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="handleDrop(event)">
+      <div class="upload-icon">
+        <svg viewBox="0 0 40 40" fill="none">
+          <rect x="4" y="8" width="24" height="28" rx="2" stroke="#00f5ff" stroke-width="1" fill="none" opacity="0.4"/>
+          <rect x="8" y="4" width="24" height="28" rx="2" stroke="#00f5ff" stroke-width="1.5" fill="rgba(0,245,255,0.06)"/>
+          <path d="M16 16 L20 12 L24 16" stroke="#ff2d9e" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+          <line x1="20" y1="12" x2="20" y2="22" stroke="#ff2d9e" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="14" y1="24" x2="26" y2="24" stroke="#00f5ff" stroke-width="1" opacity="0.5"/>
+          <line x1="14" y1="27" x2="26" y2="27" stroke="#00f5ff" stroke-width="1" opacity="0.3"/>
+        </svg>
+      </div>
+      <div class="upload-text">DROP SUSPICIOUS FILE<br>OR CLICK TO UPLOAD</div>
+      <div class="upload-subtext">.EXE · .DLL · .BAT · .PS1 · .MSI</div>
+    </div>
+    <input type="file" id="fileInput" class="file-input" onchange="handleFile(this.files[0])">
+
+    <div id="fileInfo" style="display:none">
+      <div class="section-divider"></div>
+      <div class="f9 text-dim">SPECIMEN LOADED</div>
+      <div class="f10 text-cyan mt4" id="fileName" style="word-break:break-all">—</div>
+      <div class="stat-row mt8">
+        <div class="mini-stat"><div class="mini-stat-val" id="fileSize">—</div><div class="mini-stat-lbl">SIZE KB</div></div>
+        <div class="mini-stat"><div class="mini-stat-val" id="fileType">—</div><div class="mini-stat-lbl">TYPE</div></div>
+      </div>
+      <div class="section-divider"></div>
+      <div class="f9 text-dim">THREAT LEVEL PRE-SCAN</div>
+      <div class="threat-level-display" id="threatBars" style="margin-top:6px"></div>
+    </div>
+
+    <button class="hud-btn" id="analyzeBtn" onclick="startAnalysis()" disabled>▶ INITIATE ANALYSIS</button>
+    <button class="hud-btn cyan-btn mt4" onclick="loadDemo()">⚡ LOAD DEMO SPECIMEN</button>
+
+    <div class="section-divider" style="margin-top:14px"></div>
+    <div class="f9 text-dim">SYSTEM STATUS</div>
+    <div class="hex-row mt4" id="hexRow">
+      <div class="hex active"></div><div class="hex active"></div><div class="hex active"></div>
+      <div class="hex"></div><div class="hex"></div><div class="hex"></div>
+      <div class="hex"></div><div class="hex"></div><div class="hex"></div>
+    </div>
+    <div class="f9 text-dim mt4">SANDBOX CORES: <span class="text-cyan">3/9 IDLE</span></div>
+  </div>
+
+  <!-- CENTER: Analysis workspace -->
+  <div class="panel center-panel" style="grid-row:1">
+    <div class="panel-corner tl"></div><div class="panel-corner tr"></div>
+    <div class="panel-corner bl"></div><div class="panel-corner br"></div>
+    <div class="panel-title">// BEHAVIORAL ANALYSIS ENGINE</div>
+
+    <!-- Stage indicators -->
+    <div class="stages" id="stageRow">
+      <div class="stage" id="s0">UPLOAD</div>
+      <div class="stage" id="s1">SANDBOX</div>
+      <div class="stage" id="s2">MONITOR</div>
+      <div class="stage" id="s3">PARSE</div>
+      <div class="stage" id="s4">AI ANALYZE</div>
+      <div class="stage" id="s5">REPORT</div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tab-row">
+      <div class="tab active" onclick="switchTab('process',this)">PROCESS TREE</div>
+      <div class="tab" onclick="switchTab('logs',this)">RAW LOGS</div>
+      <div class="tab" onclick="switchTab('network',this)">NETWORK</div>
+      <div class="tab" onclick="switchTab('arch',this)">ARCHITECTURE</div>
+    </div>
+
+    <!-- PROCESS TREE -->
+    <div class="tab-content active" id="tab-process">
+      <div class="proc-list" id="procList">
+        <div class="f9 text-dim" style="padding:8px;text-align:center">Awaiting specimen...<span class="blink">_</span></div>
+      </div>
+    </div>
+
+    <!-- LOGS -->
+    <div class="tab-content" id="tab-logs">
+      <div class="log-terminal" id="logTerminal">
+        <div class="log-line"><span class="log-ts">00:00:00</span><span class="log-tag info">SYS</span><span class="log-msg">ThreatNet AI v2.4.1 — sandbox initialized</span></div>
+        <div class="log-line"><span class="log-ts">00:00:00</span><span class="log-tag info">SYS</span><span class="log-msg">VirtualBox instance ready — WIN10_CLEAN_SNAPSHOT</span></div>
+        <div class="log-line"><span class="log-ts">00:00:00</span><span class="log-tag info">SYS</span><span class="log-msg">Awaiting specimen upload...</span></div>
+      </div>
+    </div>
+
+    <!-- NETWORK -->
+    <div class="tab-content" id="tab-network">
+      <div class="net-traffic" id="netTraffic">
+        <canvas id="netCanvas" style="width:100%;height:100%"></canvas>
+      </div>
+      <div class="mt8">
+        <div class="f9 text-dim">CONNECTION LOG</div>
+        <div id="connLog" style="font-size:10px;line-height:1.9;margin-top:6px;height:120px;overflow-y:auto;background:#010814;border:1px solid rgba(0,245,255,0.1);padding:8px">
+          <span class="text-dim">No connections observed.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ARCHITECTURE -->
+    <div class="tab-content" id="tab-arch">
+      <div style="margin-bottom:10px">
+        <div class="f9 text-dim">END-TO-END PIPELINE ARCHITECTURE</div>
+      </div>
+      <div class="arch-grid">
+        <div class="arch-node" onclick="showArchDetail(0)">
+          <span class="arch-icon">🌐</span>
+          <div class="arch-lbl">REACT FRONTEND</div>
+          <div style="font-size:8px;color:var(--text-dim);margin-top:3px">File upload · HUD UI</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node" onclick="showArchDetail(1)">
+          <span class="arch-icon">⚙️</span>
+          <div class="arch-lbl">FASTAPI BACKEND</div>
+          <div style="font-size:8px;color:var(--text-dim);margin-top:3px">REST API · Orchestration</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node" onclick="showArchDetail(2)">
+          <span class="arch-icon">📦</span>
+          <div class="arch-lbl">SANDBOX VM</div>
+          <div style="font-size:8px;color:var(--text-dim);margin-top:3px">VirtualBox · Isolated</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:center;margin:2px 0"><span style="color:rgba(0,245,255,0.3)">↓</span></div>
+      <div class="arch-grid">
+        <div class="arch-node" onclick="showArchDetail(3)">
+          <span class="arch-icon">📊</span>
+          <div class="arch-lbl">LOG COLLECTOR</div>
+          <div style="font-size:8px;color:var(--text-dim);margin-top:3px">Process · File · Net</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node" onclick="showArchDetail(4)">
+          <span class="arch-icon">🔄</span>
+          <div class="arch-lbl">PARSER/STRUCT</div>
+          <div style="font-size:8px;color:var(--text-dim);margin-top:3px">JSON normalization</div>
+        </div>
+        <div class="arch-arrow">→</div>
+        <div class="arch-node" onclick="showArchDetail(5)">
+          <span class="arch-icon">🤖</span>
+          <div class="arch-lbl">CLAUDE AI</div>
+          <div style="font-size:8px;color:var(--text-dim);margin-top:3px">Analysis · Report gen</div>
+        </div>
+      </div>
+
+      <div id="archDetail" style="margin-top:14px;padding:10px;border:1px solid rgba(0,245,255,0.2);background:#010814;font-size:11px;line-height:1.7;display:none"></div>
+
+      <div class="section-divider" style="margin-top:14px"></div>
+      <div class="f9 text-dim">API CONTRACT EXAMPLE</div>
+      <pre style="font-size:10px;color:var(--text-cyan);background:#010814;border:1px solid rgba(0,245,255,0.1);padding:10px;margin-top:6px;overflow-x:auto;line-height:1.6">{
+  "file_id": "a3f8-...",
+  "behaviors": {
+    "processes": [{"name":"cmd.exe","pid":4821,"parent":"malware.exe"}],
+    "file_ops": [{"op":"CREATE","path":"C:\\temp\\payload.dll"}],
+    "network":  [{"dst":"185.220.101.x","port":443,"bytes":2048}]
+  },
+  "ai_report": {
+    "type": "RANSOMWARE",
+    "risk": 0.94,
+    "confidence": "HIGH",
+    "mitigations": ["Isolate host","Block C2 IP","Restore backup"]
+  }
+}</pre>
+    </div>
+  </div>
+
+  <!-- RIGHT: AI Report -->
+  <div class="panel ai-panel" style="grid-row:1">
+    <div class="panel-corner tl"></div><div class="panel-corner tr"></div>
+    <div class="panel-corner bl"></div><div class="panel-corner br"></div>
+    <div class="panel-title">// AI THREAT REPORT</div>
+
+    <div id="reportEmpty" class="f9 text-dim" style="text-align:center;padding:30px 0">
+      Awaiting analysis...<br><span class="blink">_</span>
+    </div>
+
+    <div id="reportContent" style="display:none">
+      <div class="f9 text-dim">CLASSIFICATION</div>
+      <div class="malware-type-badge" id="malwareType">—</div>
+
+      <div class="f9 text-dim mt4">RISK SCORE</div>
+      <div class="risk-gauge"><div class="risk-fill" id="riskFill"></div></div>
+      <div style="display:flex;justify-content:space-between;font-size:9px;color:var(--text-dim)">
+        <span>LOW</span><span id="riskPct" class="text-cyan" style="font-family:'Orbitron',monospace">—</span><span>CRITICAL</span>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="f9 text-dim">CONFIDENCE</div>
+      <div class="confidence-row mt4">
+        <span>Classification accuracy</span>
+        <span class="confidence-val" id="confVal">—</span>
+      </div>
+      <div class="confidence-row">
+        <span>Behavior signature match</span>
+        <span class="confidence-val" id="sigMatch">—</span>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <div class="f9 text-dim">KEY FINDINGS</div>
+      <div id="findingsList" style="margin-top:6px"></div>
+
+      <div class="section-divider"></div>
+
+      <div class="f9 text-dim">MITIGATIONS</div>
+      <div id="mitigationList" style="font-size:10px;line-height:1.8;margin-top:6px;color:var(--text-cyan)"></div>
+
+      <div class="section-divider"></div>
+      <div class="f9 text-dim">AI REASONING</div>
+      <div id="aiReasoning" style="font-size:10px;line-height:1.65;margin-top:6px;color:#7ab8cc;font-style:italic"></div>
+    </div>
+  </div>
+
+  <!-- BOTTOM: Simulation panel -->
+  <div class="panel sim-panel" style="grid-row:2; grid-column:1/-1">
+    <div class="panel-corner tl"></div><div class="panel-corner tr"></div>
+    <div class="panel-corner bl"></div><div class="panel-corner br"></div>
+    <div class="panel-title" style="margin-bottom:8px">// LIVE SANDBOX SIMULATION — WHAT THIS MALWARE DOES TO YOUR SYSTEM</div>
+
+    <div class="sim-screen">
+      <!-- Pane 1: Desktop takeover -->
+      <div class="sim-pane">
+        <div class="f9 text-dim" style="margin-bottom:6px">► SYSTEM DISPLAY</div>
+        <div class="fake-desktop" id="fakeDesktop">
+          <!-- Desktop icons -->
+          <div style="display:flex;flex-wrap:wrap;gap:6px;padding:8px;">
+            <div style="width:36px;text-align:center;font-size:8px;color:rgba(255,255,255,0.7)">
+              <div style="font-size:18px">📁</div><div>Docs</div>
+            </div>
+            <div style="width:36px;text-align:center;font-size:8px;color:rgba(255,255,255,0.7)">
+              <div style="font-size:18px">💻</div><div>PC</div>
+            </div>
+            <div style="width:36px;text-align:center;font-size:8px;color:rgba(255,255,255,0.7)">
+              <div style="font-size:18px">🗑️</div><div>Trash</div>
+            </div>
+          </div>
+          <!-- Ransomware overlay -->
+          <div class="ransomware-overlay" id="ransomOverlay">
+            <div class="ransom-msg" id="ransomMsg">
+              <div class="ransom-title">⚠ YOUR FILES<br>ARE ENCRYPTED</div>
+              <div class="ransom-body">All data locked.<br>Pay 0.5 BTC to<br>1A2B...9Z<br>within 72 hours.</div>
+            </div>
+          </div>
+          <div class="fake-taskbar">
+            <div class="fake-start">START</div>
+            <div style="font-size:8px;color:rgba(255,255,255,0.5);margin-left:8px" id="taskbarProc"></div>
+            <div class="fake-clock" id="fakeTime">10:24 AM</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Pane 2: File system -->
+      <div class="sim-pane">
+        <div class="f9 text-dim" style="margin-bottom:6px">► FILE SYSTEM IMPACT</div>
+        <div class="fs-tree" id="fsTree">
+          <div class="fs-dir">C:\Users\victim\</div>
+          <div class="fs-file" id="f1">  Documents\budget.xlsx</div>
+          <div class="fs-file" id="f2">  Documents\passwords.txt</div>
+          <div class="fs-file" id="f3">  Pictures\family.jpg</div>
+          <div class="fs-file" id="f4">  Desktop\work.docx</div>
+          <div class="fs-dir" style="margin-top:6px">C:\Windows\Temp\</div>
+          <div class="fs-file" id="f5">  payload.dll</div>
+          <div class="fs-file" id="f6">  svchost_fake.exe</div>
+          <div class="fs-dir" style="margin-top:6px">C:\ProgramData\</div>
+          <div class="fs-file" id="f7">  startup_inject.bat</div>
+        </div>
+        <div class="section-divider"></div>
+        <div class="f9 text-dim">FILE OPERATIONS</div>
+        <div id="fileOpLog" style="font-size:9px;color:var(--text-dim);line-height:1.7;margin-top:4px;height:50px;overflow:hidden"></div>
+      </div>
+
+      <!-- Pane 3: Network exfil -->
+      <div class="sim-pane">
+        <div class="f9 text-dim" style="margin-bottom:6px">► NETWORK EXFILTRATION</div>
+        <canvas id="simNetCanvas" style="width:100%;height:130px;display:block;background:#00060f;border:1px solid rgba(0,245,255,0.1);margin-bottom:6px"></canvas>
+        <div style="font-size:9px;line-height:1.8" id="exfilLog">
+          <span class="text-dim">Monitoring... No traffic yet.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sim controls -->
+    <div class="sim-controls">
+      <button class="hud-btn" style="width:auto;padding:8px 16px;font-size:9px" id="simBtn" onclick="toggleSim()">▶ RUN SIMULATION</button>
+      <div class="sim-label">SIMULATION PROGRESS</div>
+      <div class="sim-progress-outer">
+        <div class="sim-progress-inner" id="simProgress"></div>
+      </div>
+      <div class="sim-label" id="simPhaseLabel">IDLE</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Clock ──
+function updateClock() {
+  document.getElementById('clock').textContent = new Date().toUTCString().slice(17,25)+' UTC';
+}
+setInterval(updateClock, 1000); updateClock();
+
+// ── Tab switch ──
+function switchTab(name, el) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('tab-'+name).classList.add('active');
+  el.classList.add('active');
+}
+
+// ── File handling ──
+let fileLoaded = false;
+
+function handleDrop(ev) {
+  ev.preventDefault();
+  document.getElementById('dropZone').classList.remove('drag-over');
+  const f = ev.dataTransfer.files[0];
+  if(f) handleFile(f);
+}
+
+function handleFile(f) {
+  if(!f) return;
+  fileLoaded = true;
+  document.getElementById('fileName').textContent = f.name;
+  document.getElementById('fileSize').textContent = Math.round(f.size/1024)||'<1';
+  const ext = f.name.split('.').pop().toUpperCase();
+  document.getElementById('fileType').textContent = ext||'UNK';
+  document.getElementById('fileInfo').style.display = 'block';
+  document.getElementById('analyzeBtn').disabled = false;
+
+  // Threat bars (random for demo)
+  const lvl = Math.floor(Math.random()*6)+4; // 4-9
+  let bars = '';
+  for(let i=0;i<10;i++) bars += `<div class="threat-bar ${i<lvl?'filled':''}"></div>`;
+  document.getElementById('threatBars').innerHTML = bars;
+  document.getElementById('threatBars').insertAdjacentHTML('beforeend',`<span class="threat-label">${lvl*10}%</span>`);
+}
+
+function loadDemo() {
+  handleFile({ name: 'invoice_q4.exe', size: 284672 });
+}
+
+// ── Architecture detail ──
+const archDetails = [
+  '<span class="text-cyan">React Frontend</span><br>File upload via drag-drop. Live WebSocket feed for logs. HUD-themed dashboard renders process tree, network graph, and AI report in real-time.<br><br><span class="text-dim">Stack: React 18 · Vite · TailwindCSS · Socket.io-client</span>',
+  '<span class="text-cyan">FastAPI Backend</span><br>POST /analyze accepts multipart file. Writes to /tmp/sandbox/. Triggers VBoxManage to restore snapshot and start VM. Polls log collector. Calls Claude API with structured behavior JSON.<br><br><span class="text-dim">Stack: Python 3.11 · FastAPI · Celery · Redis</span>',
+  '<span class="text-cyan">VirtualBox Sandbox</span><br>Pre-configured Win10 snapshot. File copied via VBoxManage guestcontrol. Process Monitor (procmon) + Wireshark + inotifywait capture all activity. Snapshot restored after each run.<br><br><span class="text-dim">Stack: VirtualBox 7 · Procmon · WinPcap · Python agent</span>',
+  '<span class="text-cyan">Log Collector</span><br>Python agent inside VM exports JSON: {processes[], file_ops[], registry_ops[], network_conns[]}. Streamed to backend via host-only network adapter every 500ms.<br><br><span class="text-dim">Stack: Python psutil · scapy · watchdog · JSON streaming</span>',
+  '<span class="text-cyan">Parser / Structurer</span><br>Normalizes raw procmon CSV + pcap into unified BehaviorReport schema. Deduplicates, scores severity per operation, tags known-bad IOCs from local hash DB.<br><br><span class="text-dim">Stack: Python · pandas · pyshark · MITRE ATT&CK mapping</span>',
+  '<span class="text-cyan">Claude AI Module</span><br>Sends structured BehaviorReport + system prompt to Claude API. Prompt instructs: classify malware type, score risk 0–1, list key behaviors, explain reasoning, recommend mitigations. Returns JSON report.<br><br><span class="text-dim">Stack: Anthropic Python SDK · claude-sonnet-4-20250514 · Pydantic validation</span>',
+];
+function showArchDetail(i) {
+  const d = document.getElementById('archDetail');
+  d.style.display = 'block';
+  d.innerHTML = archDetails[i];
+  document.querySelectorAll('.arch-node').forEach((n,j) => n.classList.toggle('highlight', j===i||j===i+1));
+}
+
+// ── Analysis pipeline ──
+const DEMO_PROCS = [
+  {name:'invoice_q4.exe', pid:3822, parent:'explorer.exe', color:'yellow'},
+  {name:'cmd.exe',        pid:4120, parent:'invoice_q4.exe', color:'red'},
+  {name:'powershell.exe', pid:4821, parent:'cmd.exe', color:'red'},
+  {name:'svchost.exe',    pid:1240, parent:'services.exe', color:'green'},
+  {name:'payload.dll (inject)', pid:4821, parent:'svchost.exe', color:'red'},
+  {name:'net.exe',        pid:5003, parent:'powershell.exe', color:'red'},
+  {name:'vssadmin.exe',   pid:5120, parent:'powershell.exe', color:'red'},
+];
+
+const DEMO_LOGS = [
+  [1,'warn','PROC','invoice_q4.exe spawned cmd.exe (PID 4120) — suspicious child process'],
+  [2,'crit','PROC','cmd.exe spawned powershell.exe with -enc flag — obfuscated command'],
+  [3,'warn','FILE','WRITE: C:\\Windows\\Temp\\payload.dll (248KB)'],
+  [4,'crit','FILE','INJECT: payload.dll injected into svchost.exe (PID 1240)'],
+  [5,'crit','NET', 'DNS query: c2-malnet-relay.ru — known C2 domain'],
+  [6,'crit','NET', 'CONNECT: 185.220.101.47:443 (encrypted) — 14KB outbound'],
+  [7,'warn','REG', 'WRITE: HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run — persistence'],
+  [8,'crit','FILE','CRYPTO: bulk file encryption starting (*.docx *.xlsx *.jpg)'],
+  [9,'crit','PROC','vssadmin.exe delete shadows /all — shadow copy deletion'],
+  [10,'crit','FILE','DROP: C:\\Users\\victim\\Desktop\\RANSOM_NOTE.txt'],
+];
+
+const DEMO_CONNS = [
+  {ts:'00:12', dir:'OUT', dst:'185.220.101.47',  port:443,  size:'14.2KB', type:'C2 EXFIL'},
+  {ts:'00:13', dir:'OUT', dst:'94.102.49.191',   port:80,   size:'0.4KB',  type:'C2 BEACON'},
+  {ts:'00:14', dir:'OUT', dst:'c2-malnet-relay.ru', port:443, size:'8.1KB', type:'EXFIL DNS'},
+  {ts:'00:15', dir:'IN',  dst:'185.220.101.47',  port:443,  size:'2.0KB',  type:'PAYLOAD DL'},
+];
+
+let analysisRunning = false;
+let analysisTimer = null;
+
+function startAnalysis() {
+  if(analysisRunning) return;
+  if(!fileLoaded) { loadDemo(); return; }
+  analysisRunning = true;
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('reportEmpty').style.display = 'block';
+  document.getElementById('reportContent').style.display = 'none';
+
+  // Reset stages
+  for(let i=0;i<6;i++) {
+    const s = document.getElementById('s'+i);
+    s.className = 'stage';
+  }
+
+  const stages = ['s0','s1','s2','s3','s4','s5'];
+  const durations = [800, 1500, 2500, 1000, 2000, 800];
+  let idx = 0;
+
+  function nextStage() {
+    if(idx < stages.length) {
+      const s = document.getElementById(stages[idx]);
+      if(idx > 0) document.getElementById(stages[idx-1]).className = 'stage done';
+      s.className = 'stage active';
+
+      if(idx === 1) { sandboxStart(); }
+      if(idx === 2) { streamLogs(); streamProcs(); }
+      if(idx === 3) { streamConns(); }
+      if(idx === 5) { showReport(); document.getElementById(stages[idx]).className = 'stage done'; analysisRunning=false; document.getElementById('analyzeBtn').disabled=false; return; }
+
+      idx++;
+      analysisTimer = setTimeout(nextStage, durations[idx-1]);
+    }
+  }
+  nextStage();
+}
+
+function sandboxStart() {
+  addLog('info','SYS','Restoring WIN10_CLEAN_SNAPSHOT...');
+  setTimeout(()=>addLog('info','SYS','VM booted — transferring specimen via guestcontrol'),600);
+  setTimeout(()=>addLog('info','SYS','Executing invoice_q4.exe in isolated environment'),1200);
+}
+
+let logDelay = 0;
+function streamLogs() {
+  logDelay = 0;
+  DEMO_LOGS.forEach(([sec,tag,cat,msg]) => {
+    setTimeout(()=> addLog(tag,cat,msg), logDelay);
+    logDelay += 350 + Math.random()*200;
+  });
+}
+
+function addLog(tag,cat,msg) {
+  const t = document.getElementById('logTerminal');
+  const ts = new Date().toTimeString().slice(0,8);
+  t.insertAdjacentHTML('beforeend',
+    `<div class="log-line"><span class="log-ts">${ts}</span><span class="log-tag ${tag}">${cat}</span><span class="log-msg">${msg}</span></div>`);
+  t.scrollTop = t.scrollHeight;
+}
+
+let procDelay = 0;
+function streamProcs() {
+  document.getElementById('procList').innerHTML = '';
+  procDelay = 0;
+  DEMO_PROCS.forEach(p => {
+    setTimeout(()=> {
+      const indent = p.parent === 'explorer.exe' || p.parent === 'services.exe' ? '' : '    ';
+      document.getElementById('procList').insertAdjacentHTML('beforeend',
+        `<div class="proc-item ${p.color==='red'?'danger':''}">
+          <span style="color:var(--text-dim);font-size:9px">${indent}├─</span>
+          <span class="proc-dot ${p.color}"></span>
+          <span class="proc-name">${p.name}</span>
+          <span class="proc-pid">PID:${p.pid}</span>
+          <span class="proc-mem">${Math.round(Math.random()*80+10)}MB</span>
+        </div>`);
+    }, procDelay);
+    procDelay += 400;
+  });
+}
+
+function streamConns() {
+  const cl = document.getElementById('connLog');
+  cl.innerHTML = '';
+  DEMO_CONNS.forEach((c,i) => {
+    setTimeout(()=> {
+      const col = c.type.includes('EXFIL')||c.type.includes('C2') ? 'var(--magenta)' : '#00ff88';
+      cl.insertAdjacentHTML('beforeend',
+        `<div style="color:${col}">[${c.ts}] ${c.dir} → ${c.dst}:${c.port} (${c.size}) <span style="color:var(--text-dim)">${c.type}</span></div>`);
+    }, i * 600);
+  });
+}
+
+function showReport() {
+  document.getElementById('reportEmpty').style.display = 'none';
+  document.getElementById('reportContent').style.display = 'block';
+  document.getElementById('malwareType').textContent = 'RANSOMWARE';
+  setTimeout(()=>{ document.getElementById('riskFill').style.width = '94%'; }, 100);
+  document.getElementById('riskPct').textContent = '94%';
+  document.getElementById('confVal').textContent = '97%';
+  document.getElementById('sigMatch').textContent = '91%';
+
+  const findings = [
+    {type:'critical', label:'CRITICAL', text:'vssadmin shadow deletion confirms ransomware behavior pattern'},
+    {type:'critical', label:'CRITICAL', text:'C2 connection to known malicious IP 185.220.101.47'},
+    {type:'warn',     label:'WARNING',  text:'Registry persistence via Run key — survives reboot'},
+    {type:'ok',       label:'INFO',     text:'No kernel-mode rootkit behavior detected'},
+  ];
+  document.getElementById('findingsList').innerHTML = findings.map(f=>
+    `<div class="ai-finding ${f.type}"><div class="finding-label ${f.type}">${f.label}</div>${f.text}</div>`
+  ).join('');
+
+  document.getElementById('mitigationList').innerHTML = [
+    '① Immediately isolate host from network',
+    '② Block IP 185.220.101.47 at firewall',
+    '③ Do NOT pay ransom — restore from backup',
+    '④ Wipe & reinstall OS — do not trust remediation',
+    '⑤ Hunt laterally for C2 beacons across fleet',
+  ].map(m=>`<div style="padding:2px 0;border-bottom:1px solid rgba(0,245,255,0.06)">${m}</div>`).join('');
+
+  document.getElementById('aiReasoning').textContent =
+    'The specimen exhibits a classic ransomware kill chain: initial execution → child process spawning with obfuscated PowerShell → DLL injection for stealth → shadow copy deletion to prevent recovery → mass encryption of user files → ransom note drop. C2 IP matches ThreatIntel feeds for LockBit 3.0 variant. Risk score 0.94 reflects confirmed destructive payload with active exfiltration.';
+}
+
+// ── SIMULATION ──
+let simRunning = false;
+let simInterval = null;
+let simPhase = 0;
+let simPct = 0;
+
+const simPhases = ['PAYLOAD DEPLOY','PROCESS INJECT','FILE ENCRYPTION','C2 EXFIL','PERSISTENCE','RANSOM DROP'];
+const fileIds = ['f1','f2','f3','f4'];
+const fileNames = ['budget.xlsx','passwords.txt','family.jpg','work.docx'];
+let encryptIdx = 0;
+let netAnimFrame = null;
+
+function toggleSim() {
+  if(simRunning) {
+    stopSim();
+  } else {
+    startSim();
+  }
+}
+
+function startSim() {
+  simRunning = true;
+  simPhase = 0;
+  simPct = 0;
+  encryptIdx = 0;
+  document.getElementById('simBtn').textContent = '■ STOP SIMULATION';
+  document.getElementById('ransomMsg').classList.remove('show');
+  document.getElementById('ransomOverlay').style.background = 'rgba(0,0,0,0)';
+
+  // Reset file colors
+  fileIds.forEach(id => {
+    const el = document.getElementById(id);
+    el.className = 'fs-file';
+    el.textContent = '  Documents\\' + fileNames[fileIds.indexOf(id)];
+  });
+  document.getElementById('f5').className = 'fs-file';
+  document.getElementById('f6').className = 'fs-file';
+  document.getElementById('f7').className = 'fs-file';
+  document.getElementById('fileOpLog').innerHTML = '';
+  document.getElementById('exfilLog').innerHTML = '<span class="text-dim">Monitoring...</span>';
+
+  drawSimNet();
+  runSimPhase();
+}
+
+function stopSim() {
+  simRunning = false;
+  clearInterval(simInterval);
+  cancelAnimationFrame(netAnimFrame);
+  document.getElementById('simBtn').textContent = '▶ RUN SIMULATION';
+  document.getElementById('simPhaseLabel').textContent = 'STOPPED';
+}
+
+function runSimPhase() {
+  if(!simRunning) return;
+  const phases = [
+    phasePayload,
+    phaseInject,
+    phaseEncrypt,
+    phaseExfil,
+    phasePersist,
+    phaseRansom,
+  ];
+  if(simPhase >= phases.length) { stopSim(); document.getElementById('simPhaseLabel').textContent = 'COMPLETE'; return; }
+  document.getElementById('simPhaseLabel').textContent = simPhases[simPhase];
+  phases[simPhase]();
+}
+
+function advanceProgress(pct, next) {
+  const target = simPct + pct;
+  const step = () => {
+    if(!simRunning) return;
+    simPct = Math.min(simPct + 1, target);
+    document.getElementById('simProgress').style.width = simPct + '%';
+    if(simPct < target) setTimeout(step, 30);
+    else { simPhase++; setTimeout(next, 400); }
+  };
+  step();
+}
+
+function addFileOp(msg, color) {
+  const fo = document.getElementById('fileOpLog');
+  fo.insertAdjacentHTML('beforeend', `<div style="color:${color||'var(--text-dim)'}">${msg}</div>`);
+}
+
+function phasePayload() {
+  document.getElementById('taskbarProc').textContent = 'invoice_q4.exe';
+  document.getElementById('f5').className = 'fs-file infected';
+  addFileOp('CREATE: C:\\Temp\\payload.dll', 'var(--magenta)');
+  setTimeout(() => {
+    document.getElementById('f6').className = 'fs-file infected';
+    addFileOp('CREATE: svchost_fake.exe', 'var(--magenta)');
+    advanceProgress(16, runSimPhase);
+  }, 900);
+}
+
+function phaseInject() {
+  addFileOp('INJECT: svchost.exe (PID 1240)', '#ffcc00');
+  document.getElementById('taskbarProc').textContent = 'svchost_fake [injected]';
+  advanceProgress(14, runSimPhase);
+}
+
+function phaseEncrypt() {
+  const encryptNext = () => {
+    if(!simRunning || encryptIdx >= fileIds.length) { advanceProgress(20, runSimPhase); return; }
+    const id = fileIds[encryptIdx];
+    const orig = fileNames[encryptIdx];
+    const el = document.getElementById(id);
+    el.className = 'fs-file encrypted';
+    el.textContent = '  Documents\\' + orig + '.locked';
+    addFileOp('ENCRYPT: ' + orig, '#ff8888');
+    encryptIdx++;
+    setTimeout(encryptNext, 700);
+  };
+  encryptNext();
+}
+
+function phaseExfil() {
+  document.getElementById('exfilLog').innerHTML = '';
+  const exfils = [
+    {msg:'→ DNS exfil: victim_id.c2-malnet-relay.ru', color:'var(--magenta)'},
+    {msg:'→ HTTPS POST: 185.220.101.47:443 (passwords.txt)', color:'var(--magenta)'},
+    {msg:'→ Heartbeat beacon: 94.102.49.191:80', color:'#ffcc00'},
+    {msg:'← Receive: encryption_key.bin (2KB)', color:'#00ff88'},
+  ];
+  exfils.forEach((e,i) => {
+    setTimeout(() => {
+      if(!simRunning) return;
+      document.getElementById('exfilLog').insertAdjacentHTML('beforeend',`<div style="color:${e.color}">${e.msg}</div>`);
+    }, i*600);
+  });
+  advanceProgress(20, runSimPhase);
+}
+
+function phasePersist() {
+  document.getElementById('f7').className = 'fs-file infected';
+  addFileOp('WRITE REG: ...\\Run\\WindowsDefender32', 'var(--magenta)');
+  advanceProgress(10, runSimPhase);
+}
+
+function phaseRansom() {
+  document.getElementById('ransomOverlay').style.background = 'rgba(0,0,0,0.75)';
+  setTimeout(()=> document.getElementById('ransomMsg').classList.add('show'), 300);
+  document.getElementById('taskbarProc').textContent = '⚠ ENCRYPTED';
+  advanceProgress(20, runSimPhase);
+}
+
+// ── Sim network canvas ──
+function drawSimNet() {
+  const canvas = document.getElementById('simNetCanvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  canvas.width = canvas.offsetWidth * (window.devicePixelRatio||1);
+  canvas.height = canvas.offsetHeight * (window.devicePixelRatio||1);
+  ctx.scale(window.devicePixelRatio||1, window.devicePixelRatio||1);
+
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  let packets = [];
+  let pktTimer = 0;
+
+  function spawnPacket() {
+    const types = [
+      {color:'#ff2d9e', label:'C2'},
+      {color:'#ff2d9e', label:'EXFIL'},
+      {color:'#ffcc00', label:'DNS'},
+    ];
+    const t = types[Math.floor(Math.random()*types.length)];
+    const y = 10 + Math.random()*(H-20);
+    packets.push({ x:0, y, vx: 1.5 + Math.random()*2, color:t.color, label:t.label });
+  }
+
+  function frame(ts) {
+    if(!simRunning) { ctx.clearRect(0,0,W,H); return; }
+    ctx.clearRect(0,0,W,H);
+
+    // grid lines
+    ctx.strokeStyle = 'rgba(0,245,255,0.04)';
+    ctx.lineWidth = 0.5;
+    for(let y=0; y<H; y+=16) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+    // labels
+    ctx.fillStyle = 'rgba(0,245,255,0.25)'; ctx.font = '8px monospace';
+    ctx.fillText('HOST', 4, H-4);
+    ctx.fillText('C2 SERVER', W-58, H-4);
+    ctx.strokeStyle = 'rgba(0,245,255,0.15)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(W-2, 0); ctx.lineTo(W-2, H); ctx.stroke();
+
+    if(ts - pktTimer > 500) { spawnPacket(); pktTimer = ts; }
+
+    packets = packets.filter(p => p.x < W);
+    packets.forEach(p => {
+      p.x += p.vx;
+      const trail = 24;
+      const grad = ctx.createLinearGradient(p.x - trail, p.y, p.x, p.y);
+      grad.addColorStop(0, 'transparent');
+      grad.addColorStop(1, p.color);
+      ctx.strokeStyle = grad; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(p.x-trail, p.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+      ctx.fillStyle = p.color; ctx.font = '7px monospace';
+      ctx.fillText(p.label, p.x+3, p.y-3);
+    });
+
+    netAnimFrame = requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+// Folder structure info on architecture tab
+</script>
+</body>
+</html>

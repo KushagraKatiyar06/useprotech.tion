@@ -12,6 +12,8 @@ import ThreatReportPanel, {
   type Stage4Data,
 } from '@/components/ThreatReportPanel';
 import SandboxSimulation from '@/components/SandboxSimulation';
+import LinuxSandboxPanel from '@/components/LinuxSandboxPanel';
+import { type Finding } from '@/lib/data';
 
 const STAGE_DURATIONS = [800, 1500, 2500, 1000, 2000, 800];
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
@@ -211,6 +213,7 @@ export default function Dashboard() {
         />
         <ThreatReportPanel stages={reportStages} />
         <SandboxSimulation />
+        <LinuxSandboxPanel staticData={staticData} />
       </div>
     </>
   );

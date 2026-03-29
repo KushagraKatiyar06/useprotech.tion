@@ -31,12 +31,10 @@ import asyncio
 import hashlib
 import os
 import queue
-import sys
 import tempfile
 import threading
 import uuid
 from pathlib import Path
-
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,13 +49,8 @@ _agents_env = Path(__file__).parent / "agents" / ".env"
 if _agents_env.exists():
     load_dotenv(_agents_env, override=False)
 
-# ── Python path: expose sandbox/analyze.py ───────────────────────────────────
-_sandbox_path = str(Path(__file__).parent / "sandbox")
-if _sandbox_path not in sys.path:
-    sys.path.insert(0, _sandbox_path)
-
-from analyze import analyze_js          # noqa: E402  (sandbox/analyze.py)
-from agents.pipeline import run_pipeline  # noqa: E402
+from sandbox.analyze import analyze_file   # noqa: E402
+from agents.pipeline import run_pipeline   # noqa: E402
 
 # ── Frontend paths ────────────────────────────────────────────────────────────
 _OUT = Path(__file__).parent / "frontend" / "out"
@@ -95,7 +88,7 @@ _EXT_TO_TYPE = {
 
 
 def _build_pipeline_input(filepath: str, analysis: dict) -> dict:
-    """Map analyze_js() output to the dict expected by run_pipeline()."""
+    """Map analyze_file() output to the dict expected by run_pipeline()."""
     name = Path(filepath).name
     size_kb = round(Path(filepath).stat().st_size / 1024, 2)
 
@@ -135,7 +128,7 @@ def _run_job(job_id: str, filepath: str) -> None:
         # Stage 0 — static analysis (sandbox/analyze.py)
         emit({"event": "static_analysis", "status": "running",
               "message": "Running static analysis (deobfuscation + IOC extraction)..."})
-        analysis = analyze_js(filepath)
+        analysis = analyze_file(filepath)
         emit({"event": "static_analysis", "status": "complete", "data": {
             "threat_level":        analysis.get("threat_level", "UNKNOWN"),
             "is_obfuscated":       analysis.get("is_obfuscated", False),

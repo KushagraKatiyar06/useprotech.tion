@@ -8,6 +8,7 @@ export interface FileInfo {
   sizeKb: number;
   ext: string;
   threatLevel: number;
+  file?: File;
 }
 
 interface Props {
@@ -25,7 +26,7 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
     const ext = f.name.split('.').pop()?.toUpperCase() ?? 'UNK';
     const sizeKb = Math.round(f.size / 1024) || 1;
     const threatLevel = Math.floor(Math.random() * 6) + 4;
-    onFileLoaded({ name: f.name, sizeKb, ext, threatLevel });
+    onFileLoaded({ name: f.name, sizeKb, ext, threatLevel, file: f });
   }
 
   function handleDrop(ev: React.DragEvent) {

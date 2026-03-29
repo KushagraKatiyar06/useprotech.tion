@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MalwareScope</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="logo">
+      <span class="logo-icon">⬡</span>
+      <span class="logo-text">Malware<strong>Scope</strong></span>
+    </div>
+    <div class="tagline">AI-Powered Malware Analysis Pipeline</div>
+  </header>
+
+  <main>
+    <!-- ── Upload panel ─────────────────────────────────────────────── -->
+    <section id="upload-panel" class="panel">
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-icon">⬆</div>
+        <div class="drop-title">Drop malware sample here</div>
+        <div class="drop-sub">or click to browse — .js, .exe, .ps1, .vbs, .bat</div>
+        <input id="file-input" type="file" hidden />
+      </div>
+      <div id="file-preview" class="file-preview hidden">
+        <span class="file-icon">📄</span>
+        <div class="file-info">
+          <div id="file-name" class="file-name"></div>
+          <div id="file-size" class="file-size"></div>
+        </div>
+        <button id="clear-btn" class="btn-ghost" title="Remove file">✕</button>
+      </div>
+      <button id="analyze-btn" class="btn-primary" disabled>Analyze</button>
+    </section>
+
+    <!-- ── Progress panel ───────────────────────────────────────────── -->
+    <section id="progress-panel" class="panel hidden">
+      <h2 class="section-title">Analysis Pipeline</h2>
+      <div class="pipeline">
+
+        <div class="stage" id="stage-static_analysis" data-stage="static_analysis">
+          <div class="stage-header">
+            <div class="stage-icon" id="icon-static_analysis">○</div>
+            <div class="stage-meta">
+              <div class="stage-name">Static Analysis</div>
+              <div class="stage-msg" id="msg-static_analysis">Waiting...</div>
+            </div>
+            <div class="stage-badge hidden" id="badge-static_analysis"></div>
+          </div>
+          <div class="stage-body hidden" id="body-static_analysis"></div>
+        </div>
+
+        <div class="stage" id="stage-pipeline_start" data-stage="pipeline_start">
+          <div class="stage-header">
+            <div class="stage-icon" id="icon-pipeline_start">○</div>
+            <div class="stage-meta">
+              <div class="stage-name">Ingestion Agent</div>
+              <div class="stage-msg" id="msg-pipeline_start">Waiting...</div>
+            </div>
+          </div>
+          <div class="stage-body hidden" id="body-pipeline_start"></div>
+        </div>
+
+        <div class="stage" id="stage-ingestion" data-stage="ingestion">
+          <div class="stage-header">
+            <div class="stage-icon" id="icon-ingestion">○</div>
+            <div class="stage-meta">
+              <div class="stage-name">Ingestion Agent <span class="model-tag">claude-haiku</span></div>
+              <div class="stage-msg" id="msg-ingestion">Waiting...</div>
+            </div>
+          </div>
+          <div class="stage-body hidden" id="body-ingestion"></div>
+        </div>
+
+        <div class="stage parallel-row" id="stage-parallel">
+          <div class="stage" id="stage-static_analysis_ai" data-stage="static_analysis_ai">
+            <div class="stage-header">
+              <div class="stage-icon" id="icon-static_analysis">○</div>
+              <div class="stage-meta">
+                <div class="stage-name">Static Analysis Agent <span class="model-tag">claude-haiku</span></div>
+                <div class="stage-msg" id="msg-static_analysis_ai">Waiting...</div>
+              </div>
+            </div>
+            <div class="stage-body hidden" id="body-static_analysis_ai"></div>
+          </div>
+          <div class="stage" id="stage-mitre_mapping_ai" data-stage="mitre_mapping_ai">
+            <div class="stage-header">
+              <div class="stage-icon" id="icon-mitre_mapping">○</div>
+              <div class="stage-meta">
+                <div class="stage-name">MITRE Mapping Agent <span class="model-tag">claude-haiku</span></div>
+                <div class="stage-msg" id="msg-mitre_mapping_ai">Waiting...</div>
+              </div>
+            </div>
+            <div class="stage-body hidden" id="body-mitre_mapping_ai"></div>
+          </div>
+        </div>
+
+        <div class="stage" id="stage-remediation" data-stage="remediation">
+          <div class="stage-header">
+            <div class="stage-icon" id="icon-remediation">○</div>
+            <div class="stage-meta">
+              <div class="stage-name">Remediation Agent <span class="model-tag">claude-haiku</span></div>
+              <div class="stage-msg" id="msg-remediation">Waiting...</div>
+            </div>
+          </div>
+          <div class="stage-body hidden" id="body-remediation"></div>
+        </div>
+
+        <div class="stage" id="stage-report" data-stage="report">
+          <div class="stage-header">
+            <div class="stage-icon" id="icon-report">○</div>
+            <div class="stage-meta">
+              <div class="stage-name">Report Agent <span class="model-tag">claude-haiku</span></div>
+              <div class="stage-msg" id="msg-report">Waiting...</div>
+            </div>
+          </div>
+          <div class="stage-body hidden" id="body-report"></div>
+        </div>
+
+      </div><!-- .pipeline -->
+    </section>
+
+    <!-- ── Final report ──────────────────────────────────────────────── -->
+    <section id="report-panel" class="panel hidden">
+      <h2 class="section-title">Threat Intelligence Report</h2>
+
+      <div class="report-hero">
+        <div class="risk-block">
+          <div class="risk-label">Risk Score</div>
+          <div id="risk-score" class="risk-score">—</div>
+          <div id="risk-bar-wrap" class="risk-bar-wrap">
+            <div id="risk-bar" class="risk-bar"></div>
+          </div>
+        </div>
+        <div class="summary-block">
+          <div class="summary-label">Executive Summary</div>
+          <div id="exec-summary" class="exec-summary">—</div>
+        </div>
+      </div>
+
+      <div class="report-grid">
+        <div class="report-card" id="card-malware-type">
+          <div class="card-title">Malware Classification</div>
+          <div class="card-body" id="val-malware-type">—</div>
+        </div>
+        <div class="report-card" id="card-confidence">
+          <div class="card-title">Confidence</div>
+          <div class="card-body" id="val-confidence">—</div>
+        </div>
+      </div>
+
+      <div class="report-section">
+        <div class="section-hdr">MITRE ATT&amp;CK Techniques</div>
+        <table id="mitre-table" class="mitre-table">
+          <thead><tr><th>ID</th><th>Name</th><th>Tactic</th></tr></thead>
+          <tbody id="mitre-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="report-section">
+        <div class="section-hdr">IOCs to Block</div>
+        <ul id="ioc-list" class="ioc-list"></ul>
+      </div>
+
+      <div class="report-section">
+        <div class="section-hdr">YARA Detection Rule</div>
+        <pre id="yara-rule" class="code-block"></pre>
+      </div>
+
+      <div class="report-section">
+        <div class="section-hdr">Action Plan</div>
+        <ol id="action-list" class="action-list"></ol>
+      </div>
+
+      <button id="reset-btn" class="btn-ghost reset-btn">↩ Analyze another file</button>
+    </section>
+  </main>
+
+  <script src="/static/main.js"></script>
+</body>
+</html>

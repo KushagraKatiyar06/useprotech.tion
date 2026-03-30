@@ -19,3 +19,4 @@ google-generativeai
 google-genai
 cryptography
 requests
+jspdf

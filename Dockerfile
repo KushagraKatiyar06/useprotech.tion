@@ -1,12 +1,18 @@
-FROM node:18-slim
+FROM python:3.11-slim
 
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    python3-magic \
-    && pip3 install jsbeautifier --break-system-packages
+WORKDIR /app
 
-WORKDIR /analysis
-COPY analyze.py .
+# Install system deps needed by some requirements (e.g. cryptography)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
 
-CMD ["python3", "analyze.py"]
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8080
+
+CMD uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}

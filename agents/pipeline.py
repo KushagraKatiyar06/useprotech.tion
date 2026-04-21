@@ -6,7 +6,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-client = anthropic.Anthropic()
+# Lazy-init so a missing key doesn't crash the app on import
+_client: anthropic.Anthropic | None = None
+
+def _get_client() -> anthropic.Anthropic:
+    global _client
+    if _client is None:
+        _client = anthropic.Anthropic()
+    return _client
+
 MODEL = "claude-haiku-4-5"
 
 CALL_TIMEOUT = 45  # seconds — hard limit per Claude call
@@ -14,7 +22,7 @@ CALL_TIMEOUT = 45  # seconds — hard limit per Claude call
 def call_claude(system_prompt: str, user_message: str, timeout: int = 45, max_tokens: int = 2000) -> dict:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
-            lambda: client.messages.create(
+            lambda: _get_client().messages.create(
                 model=MODEL,
                 max_tokens=max_tokens,
                 system=system_prompt,

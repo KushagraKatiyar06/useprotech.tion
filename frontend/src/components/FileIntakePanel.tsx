@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Panel from './Panel';
+import Tooltip from './Tooltip';
 
 export interface FileInfo {
   name: string;
@@ -198,17 +199,22 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
         </>
       )}
 
-      <button
-        className="hud-btn"
-        onClick={onAnalyze}
+      <Tooltip
+        text={!fileInfo ? 'Drop or select a file above first' : 'Analysis already running…'}
         disabled={!fileInfo || analysisRunning}
-        style={fileInfo?.mode === 'vt_log' ? {
-          borderColor: 'rgba(167,139,250,0.5)',
-          color: '#a78bfa',
-        } : undefined}
       >
-        {fileInfo?.mode === 'vt_log' ? '▶ ANALYSE VT LOG' : '▶ INITIATE ANALYSIS'}
-      </button>
+        <button
+          className="hud-btn"
+          onClick={onAnalyze}
+          disabled={!fileInfo || analysisRunning}
+          style={{
+            width: '100%',
+            ...(fileInfo?.mode === 'vt_log' ? { borderColor: 'rgba(167,139,250,0.5)', color: '#a78bfa' } : {}),
+          }}
+        >
+          {fileInfo?.mode === 'vt_log' ? '▶ ANALYSE VT LOG' : '▶ INITIATE ANALYSIS'}
+        </button>
+      </Tooltip>
 
       {/* ── Pre-saved VT logs (vt_log mode only) ── */}
       {!isMalware && results.length > 0 && (

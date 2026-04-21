@@ -61,9 +61,6 @@ from sandbox.analyze import analyze_file                           # noqa: E402
 from agents.pipeline import run_pipeline, enrich_with_virustotal   # noqa: E402
 
 # ── Optional e2b + Gemini (adaptive sandbox) ──────────────────────────────────
-# Mock heavy deps so the testing module can be imported without networkx/matplotlib
-for _mod in ("networkx", "matplotlib", "matplotlib.pyplot", "matplotlib.patches"):
-    sys.modules.setdefault(_mod, _types.ModuleType(_mod))
 
 _E2B_AVAILABLE = False
 _ask_gemini_for_patch = None
@@ -629,6 +626,26 @@ async def upload_file(
         target=_run_job, args=(job_id, tmp_path, original_name, resolved_mode), daemon=True
     ).start()
     return {"job_id": job_id, "filename": original_name, "mode": resolved_mode}
+
+
+@app.post("/sandbox/upload")
+async def sandbox_upload(file: UploadFile):
+    """Upload a file for sandbox-only use — no analysis pipeline started.
+
+    Returns {job_id, filename} immediately. The file is stored in _sandbox_files
+    so /sandbox/start and /sandbox/run-patch can use it.
+    """
+    job_id = str(uuid.uuid4())
+    original_name = file.filename or "upload.bin"
+    content = await file.read()
+    suffix = _resolve_true_extension(original_name)
+
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    _sandbox_files[job_id] = tmp_path
+    return {"job_id": job_id, "filename": original_name}
 
 
 @app.websocket("/ws/{job_id}")

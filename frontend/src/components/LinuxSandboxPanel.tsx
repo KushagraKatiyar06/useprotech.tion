@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Panel from './Panel';
+import Tooltip from './Tooltip';
 import { type StaticResult } from './BehavioralAnalysisPanel';
 
 // ── Node colours matching e2b_adaptive_sandbox.py TAG_RULES ──────────────────
@@ -18,7 +19,19 @@ const NODE_COLORS: Record<string, string> = {
   WSCRIPT:  '#FF8C00',
 };
 
-// Each type gets its own angular cluster around the root node
+const LEGEND_ITEMS: { type: string; desc: string }[] = [
+  { type: 'PROCESS',  desc: 'Root process' },
+  { type: 'EXEC',     desc: 'Shell execution' },
+  { type: 'NETWORK',  desc: 'HTTP/network call' },
+  { type: 'REGISTRY', desc: 'Registry access' },
+  { type: 'WMI',      desc: 'WMI query' },
+  { type: 'FILE',     desc: 'File system op' },
+  { type: 'STREAM',   desc: 'ADODB stream' },
+  { type: 'ACTIVEX',  desc: 'ActiveX object' },
+  { type: 'WSCRIPT',  desc: 'WScript call' },
+  { type: 'SLEEP',    desc: 'Sleep / delay' },
+];
+
 const TYPE_ANGLE: Record<string, number> = {
   EXEC:     0,
   NETWORK:  Math.PI * 0.30,
@@ -40,14 +53,12 @@ interface GNode {
   color: string;
 }
 
-// ── Position helper ───────────────────────────────────────────────────────────
 function getPos(type: string, idx: number, cx: number, cy: number): { x: number; y: number } {
   const angle = TYPE_ANGLE[type] ?? (idx * (Math.PI / 5));
-  const r = 92 + idx * 58;
+  const r = 110 + idx * 70;
   return { x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r };
 }
 
-// ── Classify a sandbox log line into node type + tag ─────────────────────────
 function classifyLine(line: string): { tag: 'info' | 'warn' | 'crit' | 'sys'; node?: { type: string; label: string } } {
   const u = line.toUpperCase();
   const label = line.replace(/^\[MOCK[^\]]*\]\s*/, '').slice(0, 30);
@@ -72,94 +83,213 @@ function classifyLine(line: string): { tag: 'info' | 'warn' | 'crit' | 'sys'; no
   return { tag: 'info' };
 }
 
-// ── Canvas helpers ────────────────────────────────────────────────────────────
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-  ctx.lineTo(x + r, y + h);
-  ctx.arcTo(x, y + h, x, y + h - r, r);
-  ctx.lineTo(x, y + r);
-  ctx.arcTo(x, y, x + r, y, r);
-  ctx.closePath();
+// ── SVG graph with pan + zoom ─────────────────────────────────────────────────
+interface GraphViewProps {
+  gnodes: GNode[];
 }
 
-function drawGraph(canvas: HTMLCanvasElement, gnodes: GNode[]) {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return;
+function GraphView({ gnodes }: GraphViewProps) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const dragRef = useRef<{ startX: number; startY: number; tx: number; ty: number } | null>(null);
 
-  const dpr = window.devicePixelRatio || 1;
-  const W = canvas.offsetWidth;
-  const H = canvas.offsetHeight;
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  ctx.scale(dpr, dpr);
+  const nodesEmpty = gnodes.length === 0;
+  useEffect(() => {
+    if (nodesEmpty) setTransform({ x: 0, y: 0, scale: 1 });
+  }, [nodesEmpty]);
 
-  ctx.fillStyle = '#060c1a';
-  ctx.fillRect(0, 0, W, H);
+  function onWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setTransform(t => {
+      const newScale = Math.min(4, Math.max(0.2, t.scale * delta));
+      const svg = svgRef.current;
+      if (!svg) return { ...t, scale: newScale };
+      const rect = svg.getBoundingClientRect();
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const nx = mx - (mx - t.x) * (newScale / t.scale);
+      const ny = my - (my - t.y) * (newScale / t.scale);
+      return { x: nx, y: ny, scale: newScale };
+    });
+  }
 
-  ctx.fillStyle = 'rgba(0,245,255,0.03)';
-  for (let x = 0; x < W; x += 24)
-    for (let y = 0; y < H; y += 24)
-      ctx.fillRect(x, y, 1, 1);
+  function onMouseDown(e: React.MouseEvent) {
+    if (e.button !== 0) return;
+    dragRef.current = { startX: e.clientX, startY: e.clientY, tx: transform.x, ty: transform.y };
+  }
 
-  if (gnodes.length === 0) return;
+  function onMouseMove(e: React.MouseEvent) {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX;
+    const dy = e.clientY - dragRef.current.startY;
+    setTransform(t => ({ ...t, x: dragRef.current!.tx + dx, y: dragRef.current!.ty + dy }));
+  }
+
+  function onMouseUp() { dragRef.current = null; }
 
   const root = gnodes[0];
 
-  for (let i = 1; i < gnodes.length; i++) {
-    const n = gnodes[i];
-    ctx.strokeStyle = n.color + '44';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 5]);
-    ctx.beginPath();
-    ctx.moveTo(root.x, root.y);
-    ctx.lineTo(n.x, n.y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-  }
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <svg
+        ref={svgRef}
+        width="100%" height="100%"
+        style={{ display: 'block', background: '#060c1a', cursor: dragRef.current ? 'grabbing' : 'grab', userSelect: 'none' }}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={onMouseUp}
+        onMouseLeave={onMouseUp}
+      >
+        <defs>
+          <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+            <circle cx="0" cy="0" r="0.7" fill="rgba(0,245,255,0.06)" />
+          </pattern>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="3" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+          <filter id="glow-strong">
+            <feGaussianBlur stdDeviation="5" result="blur" />
+            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+          {Object.entries(NODE_COLORS).map(([type, color]) => (
+            <marker key={type} id={`arrow-${type}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+              <path d="M0,0 L0,6 L6,3 z" fill={color + '88'} />
+            </marker>
+          ))}
+        </defs>
 
-  for (const n of gnodes) {
-    const isRoot = n.id === 'root';
-    const typeLabel = `[${n.type}]`;
-    const detail = n.label.length > 20 ? n.label.slice(0, 19) + '\u2026' : n.label;
+        <rect width="100%" height="100%" fill="url(#grid)" />
 
-    ctx.font = `bold ${isRoot ? 10 : 9}px monospace`;
-    const tw = ctx.measureText(typeLabel).width;
-    ctx.font = `${isRoot ? 9 : 8}px monospace`;
-    const dw = ctx.measureText(detail).width;
-    const w = Math.max(tw, dw) + 18;
-    const h = isRoot ? 36 : 30;
-    const bx = n.x - w / 2;
-    const by = n.y - h / 2;
+        <g transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`}>
+          {root && gnodes.slice(1).map((n) => (
+            <line
+              key={`edge-${n.id}`}
+              x1={root.x} y1={root.y} x2={n.x} y2={n.y}
+              stroke={n.color + '55'}
+              strokeWidth={1.5 / transform.scale}
+              strokeDasharray="4,6"
+              markerEnd={`url(#arrow-${n.type})`}
+            />
+          ))}
+          {gnodes.map((n) => {
+            const isRoot = n.id === 'root';
+            const W = isRoot ? 120 : 100;
+            const H = isRoot ? 44 : 36;
+            return (
+              <g key={n.id} transform={`translate(${n.x - W / 2},${n.y - H / 2})`} filter={isRoot ? 'url(#glow-strong)' : 'url(#glow)'}>
+                <rect width={W} height={H} rx={5} ry={5} fill="#060c1a" stroke={n.color} strokeWidth={isRoot ? 2 : 1.5} opacity={0.95} />
+                <text x={W / 2} y={isRoot ? 15 : 13} textAnchor="middle" fill={n.color} fontSize={isRoot ? 10 : 9} fontFamily="JetBrains Mono, monospace" fontWeight="bold">
+                  [{n.type}]
+                </text>
+                <text x={W / 2} y={isRoot ? 30 : 26} textAnchor="middle" fill="rgba(226,232,240,0.8)" fontSize={isRoot ? 9 : 8} fontFamily="JetBrains Mono, monospace">
+                  {n.label.length > 22 ? n.label.slice(0, 21) + '…' : n.label}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      </svg>
 
-    ctx.shadowColor = n.color;
-    ctx.shadowBlur = isRoot ? 14 : 7;
-    ctx.fillStyle = '#060c1a';
-    ctx.strokeStyle = n.color;
-    ctx.lineWidth = isRoot ? 2 : 1.5;
-    roundRect(ctx, bx, by, w, h, 4);
-    ctx.fill();
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+      {nodesEmpty && (
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          color: '#1e293b', fontFamily: 'JetBrains Mono, monospace', fontSize: 10, pointerEvents: 'none',
+        }}>
+          behavioral graph will render here
+        </div>
+      )}
 
-    ctx.textAlign = 'center';
-    ctx.fillStyle = n.color;
-    ctx.font = `bold ${isRoot ? 10 : 9}px monospace`;
-    ctx.fillText(typeLabel, n.x, n.y - 4);
-    ctx.fillStyle = 'rgba(226,232,240,0.85)';
-    ctx.font = `${isRoot ? 9 : 8}px monospace`;
-    ctx.fillText(detail, n.x, n.y + 9);
-    ctx.textAlign = 'left';
-  }
+      {/* Zoom controls */}
+      <div style={{ position: 'absolute', bottom: 8, right: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <button onClick={() => setTransform(t => ({ ...t, scale: Math.min(4, t.scale * 1.2) }))} style={zoomBtnStyle} title="Zoom in">+</button>
+        <button onClick={() => setTransform(t => ({ ...t, scale: Math.max(0.2, t.scale / 1.2) }))} style={zoomBtnStyle} title="Zoom out">−</button>
+        <button onClick={() => setTransform({ x: 0, y: 0, scale: 1 })} style={{ ...zoomBtnStyle, fontSize: 8 }} title="Reset view">⌂</button>
+      </div>
+      <div style={{ position: 'absolute', bottom: 8, left: 8, fontFamily: 'JetBrains Mono, monospace', fontSize: 8, color: '#334155', pointerEvents: 'none' }}>
+        {Math.round(transform.scale * 100)}%
+      </div>
+    </div>
+  );
+}
+
+const zoomBtnStyle: React.CSSProperties = {
+  width: 22, height: 22,
+  background: 'rgba(0,0,0,0.7)',
+  border: '1px solid rgba(0,245,255,0.2)',
+  color: '#00f5ff',
+  borderRadius: 4,
+  cursor: 'pointer',
+  fontFamily: 'monospace',
+  fontSize: 14,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  padding: 0,
+};
+
+// ── Legend ────────────────────────────────────────────────────────────────────
+function Legend() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        style={{
+          fontFamily: 'JetBrains Mono, monospace', fontSize: 9, letterSpacing: 1,
+          padding: '4px 10px',
+          background: open ? 'rgba(0,245,255,0.1)' : 'rgba(0,0,0,0.4)',
+          border: '1px solid rgba(0,245,255,0.2)',
+          color: '#00f5ff', borderRadius: 4, cursor: 'pointer', textTransform: 'uppercase',
+        }}
+      >
+        LEGEND {open ? '▴' : '▾'}
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', right: 0, top: '100%', marginTop: 4,
+          background: '#010814', border: '1px solid rgba(0,245,255,0.15)',
+          borderRadius: 6, padding: '10px 12px', zIndex: 10, minWidth: 210,
+          boxShadow: '0 4px 24px rgba(0,0,0,0.6)',
+        }}>
+          <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#475569', marginBottom: 8, letterSpacing: 1, textTransform: 'uppercase' }}>
+            Node Types
+          </div>
+          {LEGEND_ITEMS.map(({ type, desc }) => (
+            <div key={type} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <div style={{ width: 10, height: 10, borderRadius: 2, background: NODE_COLORS[type], flexShrink: 0, boxShadow: `0 0 4px ${NODE_COLORS[type]}` }} />
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: NODE_COLORS[type], minWidth: 70 }}>[{type}]</span>
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 8, color: '#475569' }}>{desc}</span>
+            </div>
+          ))}
+          <div style={{ borderTop: '1px solid rgba(0,245,255,0.08)', marginTop: 8, paddingTop: 8 }}>
+            <div style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#475569', marginBottom: 6, letterSpacing: 1, textTransform: 'uppercase' }}>Severity</div>
+            {[
+              { color: '#f43f5e', label: 'Critical' },
+              { color: '#f59e0b', label: 'Warning' },
+              { color: '#00f5ff', label: 'Info' },
+              { color: '#64748b', label: 'System' },
+            ].map(({ color, label }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <div style={{ width: 20, height: 2, background: color, borderRadius: 1 }} />
+                <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 8, color: '#64748b' }}>{label}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ borderTop: '1px solid rgba(0,245,255,0.08)', marginTop: 8, paddingTop: 8, fontFamily: 'JetBrains Mono, monospace', fontSize: 8, color: '#334155' }}>
+            Scroll to zoom · Drag to pan · ⌂ to reset
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
 interface Props {
   staticData?: StaticResult | null;
+  /** jobId from a completed analysis run — if provided, sandbox uses it directly */
   jobId?: string | null;
 }
 
@@ -178,25 +308,54 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
   const [logs, setLogs]         = useState<Array<{ line: string; tag: string }>>([]);
   const [gnodes, setGnodes]     = useState<GNode[]>([]);
 
-  // Store the actual File object so we can POST it to the backend
+  // jobId from a direct sandbox-only upload (no analysis)
+  const [localJobId, setLocalJobId]   = useState<string | null>(null);
+  const [localFileName, setLocalFileName] = useState<string | null>(null);
+  const [uploading, setUploading]     = useState(false);
+
+  // The effective job id — prefer the analysis one, fall back to local
+  const effectiveJobId = jobId ?? localJobId;
+
   const [patchFile, setPatchFile] = useState<File | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const sandboxFileInputRef = useRef<HTMLInputElement>(null);
+  const patchFileInputRef   = useRef<HTMLInputElement>(null);
+  const logRef              = useRef<HTMLDivElement>(null);
+  const typeIdxRef          = useRef<Record<string, number>>({});
 
-  const canvasRef  = useRef<HTMLCanvasElement>(null);
-  const logRef     = useRef<HTMLDivElement>(null);
-  const typeIdxRef = useRef<Record<string, number>>({});
-
-  // Auto-scroll console
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [logs]);
 
-  // Redraw graph whenever nodes change
-  useEffect(() => {
-    if (canvasRef.current) drawGraph(canvasRef.current, gnodes);
-  }, [gnodes]);
+  // ── Direct sandbox file upload (no analysis) ────────────────────────────
+  function handleSandboxFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+    fetch(`${API_URL}/sandbox/upload`, { method: 'POST', body: formData })
+      .then(r => {
+        if (!r.ok) throw new Error(`Upload failed: ${r.status}`);
+        return r.json();
+      })
+      .then(({ job_id, filename }: { job_id: string; filename: string }) => {
+        setLocalJobId(job_id);
+        setLocalFileName(filename);
+        setUploading(false);
+      })
+      .catch(err => {
+        console.error('[sandbox upload]', err);
+        setUploading(false);
+      });
+  }
 
-  // ── File picker ───────────────────────────────────────────────────────────
+  function clearLocalFile() {
+    setLocalJobId(null);
+    setLocalFileName(null);
+  }
+
+  // ── Patch file ────────────────────────────────────────────────────────────
   function handlePatchFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -204,20 +363,15 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
     e.target.value = '';
   }
 
-  function clearPatch() {
-    setPatchFile(null);
-  }
+  function clearPatch() { setPatchFile(null); }
 
-  // ── Graph / log helpers ───────────────────────────────────────────────────
-  function initCanvas() {
-    const canvas = canvasRef.current;
-    const W  = canvas?.offsetWidth  ?? 500;
-    const H  = canvas?.offsetHeight ?? 300;
-    const cx = W / 2;
-    const cy = H / 2;
+  // ── Graph helpers ─────────────────────────────────────────────────────────
+  function initGraph(fileName: string) {
+    const cx = 400;
+    const cy = 180;
     const rootNode: GNode = {
       id: 'root', type: 'PROCESS',
-      label: staticData?.file_name ?? 'malware.js',
+      label: fileName,
       x: cx, y: cy,
       color: NODE_COLORS.PROCESS,
     };
@@ -240,7 +394,6 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
     }
   }
 
-  // ── Shared WebSocket handler ──────────────────────────────────────────────
   function connectSandboxWS(sandbox_job_id: string, cx: number, cy: number) {
     const wsBase = API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'));
     const ws = new WebSocket(`${wsBase}/ws/sandbox/${sandbox_job_id}`);
@@ -248,20 +401,13 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data as string) as Record<string, unknown>;
-
         if (msg.event === 'sandbox_log') {
-          addLogNode(
-            msg.line as string,
-            (msg.tag as string) ?? 'info',
-            cx, cy,
-            msg.node as { type: string; label: string } | null ?? undefined,
-          );
+          addLogNode(msg.line as string, (msg.tag as string) ?? 'info', cx, cy,
+            msg.node as { type: string; label: string } | null ?? undefined);
         }
-
         if (msg.event === 'sandbox_patch') {
           addLogNode(msg.line as string, 'info', cx, cy);
         }
-
         if (msg.event === 'sandbox_done' || msg.event === 'sandbox_error') {
           if (msg.event === 'sandbox_done') {
             const pf = msg.patch_file as string | null;
@@ -270,9 +416,7 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
           setRunning(false);
           setDone(msg.event === 'sandbox_done');
         }
-      } catch (e) {
-        console.error('[sandbox WS] parse error:', e);
-      }
+      } catch (e) { console.error('[sandbox WS] parse error:', e); }
     };
 
     ws.onerror = () => {
@@ -281,68 +425,118 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
     };
   }
 
-  // ── Mode A: run malware with uploaded patch (single run, no Gemini) ───────
-  function runPatchSandbox(cx: number, cy: number) {
-    if (!jobId || !patchFile) return;
+  function runPatchSandbox(jid: string, cx: number, cy: number) {
+    if (!patchFile) return;
     const formData = new FormData();
     formData.append('patch', patchFile);
-
-    fetch(`${API_URL}/sandbox/run-patch/${jobId}`, { method: 'POST', body: formData })
-      .then(r => {
-        if (!r.ok) throw new Error(`Patch run failed: ${r.status}`);
-        return r.json();
-      })
-      .then(({ sandbox_job_id }: { sandbox_job_id: string }) => {
-        connectSandboxWS(sandbox_job_id, cx, cy);
-      })
-      .catch(err => {
-        addLogNode(`[ERROR] ${err.message}`, 'crit', cx, cy);
-        setRunning(false);
-      });
+    fetch(`${API_URL}/sandbox/run-patch/${jid}`, { method: 'POST', body: formData })
+      .then(r => { if (!r.ok) throw new Error(`Patch run failed: ${r.status}`); return r.json(); })
+      .then(({ sandbox_job_id }: { sandbox_job_id: string }) => connectSandboxWS(sandbox_job_id, cx, cy))
+      .catch(err => { addLogNode(`[ERROR] ${err.message}`, 'crit', cx, cy); setRunning(false); });
   }
 
-  // ── Mode B: Gemini adaptive sandbox (iterative patching, no patch file) ───
-  function runAdaptiveSandbox(cx: number, cy: number) {
-    fetch(`${API_URL}/sandbox/start/${jobId}`, { method: 'POST' })
-      .then(r => {
-        if (!r.ok) throw new Error(`Sandbox start failed: ${r.status}`);
-        return r.json();
-      })
-      .then(({ sandbox_job_id }: { sandbox_job_id: string }) => {
-        connectSandboxWS(sandbox_job_id, cx, cy);
-      })
-      .catch(err => {
-        addLogNode(`[ERROR] ${err.message}`, 'crit', cx, cy);
-        setRunning(false);
-      });
+  function runAdaptiveSandbox(jid: string, cx: number, cy: number) {
+    fetch(`${API_URL}/sandbox/start/${jid}`, { method: 'POST' })
+      .then(r => { if (!r.ok) throw new Error(`Sandbox start failed: ${r.status}`); return r.json(); })
+      .then(({ sandbox_job_id }: { sandbox_job_id: string }) => connectSandboxWS(sandbox_job_id, cx, cy))
+      .catch(err => { addLogNode(`[ERROR] ${err.message}`, 'crit', cx, cy); setRunning(false); });
   }
 
-  // ── Entry point ────────────────────────────────────────────────────────────
   const runSim = useCallback(() => {
-    if (running || !jobId) return;
+    if (running || !effectiveJobId) return;
     setRunning(true);
     setDone(false);
     setLogs([]);
     setGnodes([]);
     typeIdxRef.current = {};
 
-    const { cx, cy } = initCanvas();
+    const displayName = staticData?.file_name ?? localFileName ?? 'malware.js';
+    const { cx, cy } = initGraph(displayName);
 
     if (patchFile) {
-      runPatchSandbox(cx, cy);
+      runPatchSandbox(effectiveJobId, cx, cy);
     } else {
-      runAdaptiveSandbox(cx, cy);
+      runAdaptiveSandbox(effectiveJobId, cx, cy);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running, jobId, patchFile, staticData]);
+  }, [running, effectiveJobId, patchFile, staticData, localFileName]);
 
   const nodeCount  = gnodes.length > 0 ? gnodes.length - 1 : 0;
-  const patchMode  = !!patchFile && !!jobId;
-  const adaptiveMode = !patchFile && !!jobId;
-  const canRun = !!jobId && !running;
+  const patchMode  = !!patchFile && !!effectiveJobId;
+  const adaptiveMode = !patchFile && !!effectiveJobId;
+  const canRun     = !!effectiveJobId && !running;
+  const hasPatch   = !!patchFile;
+
+  // Derive the displayed file name (from analysis or direct upload)
+  const displayedFile = staticData?.file_name ?? (jobId ? '(analysis file)' : localFileName);
 
   return (
     <Panel title="// LINUX ADAPTIVE SANDBOX — e2b isolation" style={{ gridColumn: '1 / -1' }}>
+
+      {/* ── File source bar (shown when no analysis job is present) ── */}
+      {!jobId && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          marginBottom: 10, padding: '8px 12px',
+          background: 'rgba(0,0,0,0.4)',
+          border: `1px solid ${localJobId ? 'rgba(0,245,255,0.2)' : 'rgba(0,245,255,0.06)'}`,
+          borderRadius: 6,
+        }}>
+          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#475569', flexShrink: 0 }}>
+            SANDBOX FILE
+          </span>
+
+          {localJobId ? (
+            <>
+              <span style={{
+                fontFamily: 'JetBrains Mono, monospace', fontSize: 9,
+                color: '#00f5ff', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                ✓ {localFileName}
+              </span>
+              <button
+                onClick={clearLocalFile}
+                disabled={running}
+                style={{
+                  fontFamily: 'JetBrains Mono, monospace', fontSize: 9,
+                  padding: '3px 8px', background: 'rgba(244,63,94,0.1)',
+                  border: '1px solid rgba(244,63,94,0.3)', color: '#f43f5e',
+                  borderRadius: 4, cursor: running ? 'not-allowed' : 'pointer',
+                }}
+              >
+                ✕ CLEAR
+              </button>
+            </>
+          ) : (
+            <>
+              <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#334155', flex: 1 }}>
+                {uploading ? 'uploading…' : 'No file — upload a malware file or run analysis first'}
+              </span>
+              <button
+                onClick={() => sandboxFileInputRef.current?.click()}
+                disabled={uploading || running}
+                style={{
+                  fontFamily: 'Orbitron, monospace', fontSize: 9, letterSpacing: 1,
+                  padding: '4px 12px',
+                  background: uploading ? 'rgba(0,245,255,0.03)' : 'rgba(0,245,255,0.08)',
+                  border: '1px solid rgba(0,245,255,0.25)', color: uploading ? '#334155' : '#00f5ff',
+                  borderRadius: 4, cursor: uploading ? 'not-allowed' : 'pointer',
+                  textTransform: 'uppercase', transition: 'all 0.2s',
+                }}
+              >
+                {uploading ? 'UPLOADING…' : 'LOAD FILE'}
+              </button>
+            </>
+          )}
+
+          <input
+            ref={sandboxFileInputRef}
+            type="file"
+            style={{ display: 'none' }}
+            onChange={handleSandboxFileChange}
+          />
+        </div>
+      )}
 
       {/* ── System info bar + controls ── */}
       <div style={{
@@ -360,38 +554,23 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
             Linux 5.15.0-91-generic x86_64 GNU/Linux
           </span>
           <span style={{
-            padding: '2px 7px',
-            border: '1px solid rgba(144,238,144,0.3)',
-            borderRadius: 3, fontSize: 8,
-            color: '#90EE90',
-            fontFamily: 'JetBrains Mono, monospace',
-            letterSpacing: 1,
-          }}>
-            ISOLATED
-          </span>
+            padding: '2px 7px', border: '1px solid rgba(144,238,144,0.3)',
+            borderRadius: 3, fontSize: 8, color: '#90EE90',
+            fontFamily: 'JetBrains Mono, monospace', letterSpacing: 1,
+          }}>ISOLATED</span>
           {patchMode && (
             <span style={{
-              padding: '2px 7px',
-              border: '1px solid rgba(255,215,0,0.4)',
-              borderRadius: 3, fontSize: 8,
-              color: '#FFD700',
-              fontFamily: 'JetBrains Mono, monospace',
-              letterSpacing: 1,
-            }}>
-              PATCH RUN
-            </span>
+              padding: '2px 7px', border: '1px solid rgba(255,215,0,0.4)',
+              borderRadius: 3, fontSize: 8, color: '#FFD700',
+              fontFamily: 'JetBrains Mono, monospace', letterSpacing: 1,
+            }}>PATCH RUN</span>
           )}
           {adaptiveMode && (
             <span style={{
-              padding: '2px 7px',
-              border: '1px solid rgba(139,92,246,0.5)',
-              borderRadius: 3, fontSize: 8,
-              color: '#a78bfa',
-              fontFamily: 'JetBrains Mono, monospace',
-              letterSpacing: 1,
-            }}>
-              LIVE E2B
-            </span>
+              padding: '2px 7px', border: '1px solid rgba(139,92,246,0.5)',
+              borderRadius: 3, fontSize: 8, color: '#a78bfa',
+              fontFamily: 'JetBrains Mono, monospace', letterSpacing: 1,
+            }}>LIVE E2B</span>
           )}
         </div>
 
@@ -405,181 +584,134 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
             {nodeCount} node{nodeCount !== 1 ? 's' : ''}
           </span>
 
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".js"
-            style={{ display: 'none' }}
-            onChange={handlePatchFile}
-          />
+          {/* Legend */}
+          <Legend />
+
+          {/* Hidden patch file input */}
+          <input ref={patchFileInputRef} type="file" accept=".js" style={{ display: 'none' }} onChange={handlePatchFile} />
 
           {/* Patch file button */}
-          {patchFile ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span style={{
-                fontFamily: 'JetBrains Mono, monospace',
-                fontSize: 8, color: '#FFD700',
-                padding: '4px 8px',
-                background: 'rgba(255,215,0,0.08)',
-                border: '1px solid rgba(255,215,0,0.3)',
-                borderRadius: 4,
-                maxWidth: 140,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                whiteSpace: 'nowrap',
-              }}>
-                ✓ {patchFile.name}
-              </span>
+          <Tooltip
+            text={!effectiveJobId ? 'Load a malware file first' : 'Upload a .js patch to test against'}
+            disabled={!effectiveJobId}
+          >
+            {patchFile ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                <span style={{
+                  fontFamily: 'JetBrains Mono, monospace', fontSize: 8, color: '#FFD700',
+                  padding: '4px 8px', background: 'rgba(255,215,0,0.08)',
+                  border: '1px solid rgba(255,215,0,0.3)', borderRadius: 4,
+                  maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}>✓ {patchFile.name}</span>
+                <button
+                  onClick={clearPatch}
+                  disabled={running}
+                  style={{
+                    fontFamily: 'JetBrains Mono, monospace', fontSize: 9, padding: '4px 7px',
+                    background: 'rgba(244,63,94,0.1)', border: '1px solid rgba(244,63,94,0.3)',
+                    color: '#f43f5e', borderRadius: 4, cursor: running ? 'not-allowed' : 'pointer',
+                  }}
+                >✕</button>
+              </div>
+            ) : (
               <button
-                onClick={clearPatch}
-                disabled={running}
+                onClick={() => { if (effectiveJobId) patchFileInputRef.current?.click(); }}
+                disabled={!effectiveJobId || running}
                 style={{
-                  fontFamily: 'JetBrains Mono, monospace',
-                  fontSize: 9, padding: '4px 7px',
-                  background: 'rgba(244,63,94,0.1)',
-                  border: '1px solid rgba(244,63,94,0.3)',
-                  color: '#f43f5e',
-                  borderRadius: 4,
-                  cursor: running ? 'not-allowed' : 'pointer',
+                  fontFamily: 'Orbitron, monospace', fontSize: 9, letterSpacing: 1,
+                  padding: '5px 12px',
+                  background: !effectiveJobId ? 'rgba(255,215,0,0.02)' : 'rgba(255,215,0,0.07)',
+                  border: `1px solid ${!effectiveJobId ? 'rgba(255,215,0,0.1)' : 'rgba(255,215,0,0.3)'}`,
+                  color: !effectiveJobId ? '#3d3010' : '#b8941f',
+                  borderRadius: 4, cursor: (!effectiveJobId || running) ? 'not-allowed' : 'pointer',
+                  textTransform: 'uppercase', transition: 'all 0.2s',
                 }}
-              >
-                ✕
-              </button>
-            </div>
-          ) : (
+              >UPLOAD PATCH</button>
+            )}
+          </Tooltip>
+
+          {/* Run button */}
+          <Tooltip
+            text={
+              !effectiveJobId
+                ? 'Load a malware file using "LOAD FILE" above'
+                : running
+                  ? 'Sandbox is running…'
+                  : ''
+            }
+            disabled={!canRun}
+          >
             <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={running}
-              title="Upload a .js patch file to run the malware against it"
+              onClick={runSim}
+              disabled={!canRun}
               style={{
-                fontFamily: 'Orbitron, monospace',
-                fontSize: 9, letterSpacing: 1,
-                padding: '5px 12px',
-                background: 'rgba(255,215,0,0.07)',
-                border: '1px solid rgba(255,215,0,0.3)',
-                color: '#b8941f',
-                borderRadius: 4,
-                cursor: running ? 'not-allowed' : 'pointer',
-                textTransform: 'uppercase',
-                transition: 'all 0.2s',
+                fontFamily: 'Orbitron, monospace', fontSize: 9, letterSpacing: 2,
+                padding: '5px 14px',
+                background: !canRun ? 'rgba(139,92,246,0.05)' : 'rgba(139,92,246,0.18)',
+                border: `1px solid ${!canRun ? 'rgba(139,92,246,0.15)' : 'rgba(139,92,246,0.65)'}`,
+                color: !canRun ? '#4a3880' : '#a78bfa',
+                borderRadius: 4, cursor: !canRun ? 'not-allowed' : 'pointer',
+                textTransform: 'uppercase', transition: 'all 0.2s',
               }}
             >
-              UPLOAD PATCH
+              {running ? 'RUNNING...' : done ? 'RE-RUN' : 'RUN SANDBOX'}
             </button>
-          )}
-
-          <button
-            onClick={runSim}
-            disabled={!canRun}
-            title={!jobId ? 'Upload and analyse a malware file first' : undefined}
-            style={{
-              fontFamily: 'Orbitron, monospace',
-              fontSize: 9, letterSpacing: 2,
-              padding: '5px 14px',
-              background: !canRun ? 'rgba(139,92,246,0.05)' : 'rgba(139,92,246,0.18)',
-              border: `1px solid ${!canRun ? 'rgba(139,92,246,0.15)' : 'rgba(139,92,246,0.65)'}`,
-              color: !canRun ? '#4a3880' : '#a78bfa',
-              borderRadius: 4,
-              cursor: !canRun ? 'not-allowed' : 'pointer',
-              textTransform: 'uppercase',
-              transition: 'all 0.2s',
-            }}
-          >
-            {running ? 'RUNNING...' : done ? 'RE-RUN' : 'RUN SANDBOX'}
-          </button>
+          </Tooltip>
         </div>
       </div>
 
-      {/* Mode hint */}
-      {!jobId && (
-        <div style={{
-          marginBottom: 8, padding: '5px 10px',
-          background: 'rgba(0,245,255,0.03)',
-          border: '1px solid rgba(0,245,255,0.08)',
-          borderRadius: 4,
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize: 9, color: '#475569',
-        }}>
-          Upload and analyse a malware file above to enable the sandbox.
-        </div>
-      )}
+      {/* Mode hints */}
       {patchMode && !running && !done && (
         <div style={{
           marginBottom: 8, padding: '5px 10px',
-          background: 'rgba(255,215,0,0.04)',
-          border: '1px solid rgba(255,215,0,0.15)',
-          borderRadius: 4,
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize: 9, color: '#78716c',
+          background: 'rgba(255,215,0,0.04)', border: '1px solid rgba(255,215,0,0.15)',
+          borderRadius: 4, fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#78716c',
         }}>
-          Patch loaded — will run malware against <span style={{ color: '#FFD700' }}>{patchFile?.name}</span> in a real e2b sandbox.
+          Patch loaded — will run <span style={{ color: '#00f5ff' }}>{displayedFile}</span> against{' '}
+          <span style={{ color: '#FFD700' }}>{patchFile?.name}</span> in a real e2b sandbox.
         </div>
       )}
       {adaptiveMode && !running && !done && (
         <div style={{
           marginBottom: 8, padding: '5px 10px',
-          background: 'rgba(139,92,246,0.04)',
-          border: '1px solid rgba(139,92,246,0.15)',
-          borderRadius: 4,
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize: 9, color: '#78716c',
+          background: 'rgba(139,92,246,0.04)', border: '1px solid rgba(139,92,246,0.15)',
+          borderRadius: 4, fontFamily: 'JetBrains Mono, monospace', fontSize: 9, color: '#78716c',
         }}>
-          Adaptive mode — Gemini patches crashes iteratively in a real e2b sandbox. Patches saved to <span style={{ color: '#a78bfa' }}>testing/patches/</span>.
+          Adaptive mode — Gemini patches crashes iteratively for{' '}
+          <span style={{ color: '#00f5ff' }}>{displayedFile}</span>.
+          Patches saved to <span style={{ color: '#a78bfa' }}>testing/patches/</span>.
         </div>
       )}
 
-      {/* ── Console  |  Graph ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '38% 1fr', gap: 12, height: 300 }}>
+      {/* ── Console | Graph ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: '38% 1fr', gap: 12, height: 340 }}>
 
         {/* Terminal console */}
         <div
           ref={logRef}
           style={{
-            background: '#010814',
-            border: '1px solid rgba(0,245,255,0.08)',
-            borderRadius: 6,
-            padding: '8px 10px',
-            overflowY: 'auto',
-            fontFamily: 'JetBrains Mono, monospace',
-            fontSize: 10,
-            lineHeight: 1.75,
+            background: '#010814', border: '1px solid rgba(0,245,255,0.08)',
+            borderRadius: 6, padding: '8px 10px', overflowY: 'auto',
+            fontFamily: 'JetBrains Mono, monospace', fontSize: 10, lineHeight: 1.75,
           }}
         >
           {logs.length === 0 ? (
             <span style={{ color: '#1e293b' }}>
-              {jobId ? 'Press RUN SANDBOX to begin' : 'Waiting for malware upload...'}<span className="blink">_</span>
+              {effectiveJobId ? 'Press RUN SANDBOX to begin' : 'Load a file to enable the sandbox…'}<span className="blink">_</span>
             </span>
           ) : (
             logs.map((l, i) => (
-              <div key={i} style={{ color: TAG_COLOR[l.tag] ?? '#94a3b8' }}>
-                {l.line}
-              </div>
+              <div key={i} style={{ color: TAG_COLOR[l.tag] ?? '#94a3b8' }}>{l.line}</div>
             ))
           )}
         </div>
 
-        {/* Behavioral graph canvas */}
+        {/* Interactive graph */}
         <div style={{
-          position: 'relative',
-          background: '#060c1a',
-          border: '1px solid rgba(0,245,255,0.08)',
-          borderRadius: 6,
-          overflow: 'hidden',
+          position: 'relative', background: '#060c1a',
+          border: '1px solid rgba(0,245,255,0.08)', borderRadius: 6, overflow: 'hidden',
         }}>
-          <canvas ref={canvasRef} style={{ width: '100%', height: '100%', display: 'block' }} />
-          {gnodes.length === 0 && (
-            <div style={{
-              position: 'absolute', inset: 0,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              color: '#1e293b',
-              fontFamily: 'JetBrains Mono, monospace',
-              fontSize: 10,
-              pointerEvents: 'none',
-            }}>
-              behavioral graph will render here
-            </div>
-          )}
+          <GraphView gnodes={gnodes} />
         </div>
       </div>
     </Panel>

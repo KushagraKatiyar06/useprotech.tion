@@ -117,7 +117,7 @@ def build_docker_image() -> bool:
     log(f"Building Docker image '{IMAGE_NAME}' from {SANDBOX_DIR} ...")
     result = subprocess.run(
         ["docker", "build", "-t", IMAGE_NAME, str(SANDBOX_DIR)],
-        capture_output=True, text=True
+        capture_output=True, text=True, timeout=300,
     )
     if result.returncode != 0:
         err("docker build failed:\n" + result.stderr[-1000:])
@@ -328,7 +328,7 @@ def main():
     print("=" * 60)
 
     # Check Docker is available
-    check = subprocess.run(["docker", "info"], capture_output=True)
+    check = subprocess.run(["docker", "info"], capture_output=True, timeout=15)
     if check.returncode != 0:
         err("Docker is not running or not installed — skipping sandbox phase.")
     else:

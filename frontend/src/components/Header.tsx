@@ -4,7 +4,7 @@ export default function Header() {
   return (
     <div className="hud-header">
       <div className="hud-logo">
-        Use<span>Protechtion</span>
+        USE<span>PROTECHTION</span>
       </div>
     </div>
   );

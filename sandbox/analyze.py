@@ -306,7 +306,7 @@ def run_yara(filepath: str) -> list:
     try:
         import yara
         rules = yara.compile(source=INLINE_YARA_RULES)
-        matches = rules.match(filepath)
+        matches = rules.match(filepath, timeout=30)
         return [m.rule for m in matches]
     except ImportError:
         # yara-python not available — try CLI
@@ -660,6 +660,9 @@ def classify_pe_behaviors_extended(pe_data: dict, strings_list: list,
         behaviors.append('Obfuscated .NET type names detected')
     if any(t in all_text for t in ['ip-api.com', 'checkip', 'ipinfo.io', 'myexternalip']):
         behaviors.append('External IP geolocation lookup (victim fingerprinting)')
+    # NOTE: pe_data never sets a 'notes' key (run_pefile() has no such field), so
+    # this check is always False / dead code. Left as-is rather than guessing
+    # what should populate 'notes'.
     if 'fake_extension' in (pe_data.get('notes') or ''):
         behaviors.append('Fake file extension (masquerade)')
 

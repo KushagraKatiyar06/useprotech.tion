@@ -44,10 +44,13 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, Form, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 # ── Environment ──────────────────────────────────────────────────────────────
 # Load root .env first, then agents/.env so the Anthropic key is available
@@ -250,15 +253,28 @@ def _build_pipeline_input_from_vt(vt_raw: dict, original_name: str, content: byt
     }
 
 
+# Reject absurdly large uploads before they hit disk/analysis (malware samples
+# are almost always well under this; adjust if legitimate samples are bigger).
+_MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
+
 # ── Frontend paths ────────────────────────────────────────────────────────────
 _OUT = Path(__file__).parent / "frontend" / "out"
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="UseProtection API", docs_url="/api/docs")
 
+# Rate limiting — per-IP, since /upload and /sandbox/start each trigger costly
+# Anthropic/Gemini/e2b API calls and unlimited background threads.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # CORS — origins from env var (comma-separated) so production can lock to the
 # Cloudflare Pages domain without a code change.
 # Local default: "*" (open). Railway: set ALLOWED_ORIGINS=https://your-app.pages.dev
+# NOTE: allow_origins=["*"] together with allow_credentials=True is rejected by
+# browsers (and is an overly-permissive config for an app that accepts
+# untrusted file uploads), so credentials stay disabled regardless of origins.
 _raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
 _ALLOWED_ORIGINS: list[str] = (
     ["*"] if _raw_origins.strip() == "*"
@@ -590,7 +606,9 @@ async def health():
 
 
 @app.post("/upload")
+@limiter.limit("5/minute")
 async def upload_file(
+    request: Request,
     file: UploadFile,
     mode: str | None = Form(None),   # explicit override: "malware" | "vt_log"
 ):
@@ -606,6 +624,10 @@ async def upload_file(
     job_id = str(uuid.uuid4())
     original_name = file.filename or "upload.bin"
     content = await file.read()
+
+    if len(content) > _MAX_UPLOAD_BYTES:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=413, detail="File too large")
 
     # Resolve mode: explicit > auto-detect
     if mode == "vt_log":
@@ -766,7 +788,8 @@ async def sandbox_run_patch(job_id: str, patch: UploadFile):
 
 
 @app.post("/sandbox/start/{job_id}")
-async def sandbox_start(job_id: str):
+@limiter.limit("3/minute")
+async def sandbox_start(request: Request, job_id: str):
     """Start an adaptive e2b sandbox run for a previously uploaded file."""
     filepath = _sandbox_files.get(job_id)
     if not filepath or not Path(filepath).exists():
@@ -894,8 +917,11 @@ async def root():
 # Falls back to 404.html for unknown paths.
 @app.get("/{full_path:path}", include_in_schema=False)
 async def static_fallback(full_path: str):
-    candidate = _OUT / full_path
-    if candidate.is_file():
+    # Resolve and verify the candidate stays inside _OUT to prevent path
+    # traversal via "../" segments in full_path (e.g. /../../etc/passwd).
+    out_root = _OUT.resolve()
+    candidate = (out_root / full_path).resolve()
+    if candidate.is_file() and out_root in candidate.parents:
         return FileResponse(str(candidate))
     not_found = _OUT / "404.html"
     if not_found.exists():

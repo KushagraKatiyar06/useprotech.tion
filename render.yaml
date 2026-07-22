@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: useprotection-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /api/docs
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: E2B_API_KEY
+        sync: false
+      - key: HYBRID_ANALYSIS_API_KEY
+        sync: false
+      - key: VT_API_KEY
+        sync: false

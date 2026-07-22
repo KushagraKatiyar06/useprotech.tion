@@ -4,37 +4,28 @@ import os
 import anthropic
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
 
-client = anthropic.Anthropic()
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 MODEL = "claude-haiku-4-5"
 
 CALL_TIMEOUT = 45  # seconds — hard limit per Claude call
 
-def call_claude(system_prompt: str, user_message: str, timeout: int = 45, max_tokens: int = 2000) -> dict:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(
-            lambda: client.messages.create(
-                model=MODEL,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_message}]
-            )
-        )
-        try:
-            response = future.result(timeout=timeout)
-            text = response.content[0].text.strip()
-            if text.startswith("```"):
-                text = text.split("```")[1]
-                if text.startswith("json"):
-                    text = text[4:]
-            return json.loads(text.strip())
-        except concurrent.futures.TimeoutError:
-            print(f"WARNING: Claude call timed out after {timeout}s")
-            return {"error": "timeout", "partial": True}
-        except Exception as e:
-            print(f"WARNING: Claude call failed: {e}")
-            return {}
+def call_claude(system_prompt: str, user_message: str, max_tokens: int = 2000) -> dict:
+    """Call Claude and return parsed JSON response."""
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_message}]
+    )
+    text = response.content[0].text.strip()
+    # Strip markdown if present
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    return json.loads(text.strip())
 
 
 def _call_claude_timed(system_prompt: str, user_message: str,
@@ -44,7 +35,7 @@ def _call_claude_timed(system_prompt: str, user_message: str,
     so the pipeline can continue with partial data rather than hanging indefinitely.
     """
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(call_claude, system_prompt, user_message, timeout=timeout, max_tokens=max_tokens)
+        fut = ex.submit(call_claude, system_prompt, user_message, max_tokens)
         try:
             return fut.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
@@ -99,7 +90,7 @@ def enrich_with_virustotal(vt_json_path: str) -> dict:
 
 def run_ingestion(file_metadata: dict) -> dict:
     print("Running Ingestion Agent...")
-    return call_claude(
+    return _call_claude_timed(
         system_prompt="""You are a malware triage specialist.
         Given raw file metadata, structure it cleanly and flag anything suspicious.
         Output valid JSON only, no markdown, no explanation.
@@ -117,7 +108,7 @@ def run_ingestion(file_metadata: dict) -> dict:
 
 def run_static_analysis(ingestion_output: dict) -> dict:
     print("Running Static Analysis Agent...")
-    return call_claude(
+    return _call_claude_timed(
         system_prompt="""You are a malware analyst specializing in static analysis.
         Classify the malware type, explain behavior, identify obfuscation, assess severity.
         Output valid JSON only, no markdown, no explanation.
@@ -135,7 +126,7 @@ def run_static_analysis(ingestion_output: dict) -> dict:
 
 def run_mitre_mapping(ingestion_output: dict) -> dict:
     print("Running MITRE Mapping Agent...")
-    return call_claude(
+    return _call_claude_timed(
         system_prompt="""You are a MITRE ATT&CK framework specialist.
         Map behaviors to the most specific ATT&CK technique IDs possible.
         Output valid JSON only, no markdown, no explanation.
@@ -156,7 +147,7 @@ def run_mitre_mapping(ingestion_output: dict) -> dict:
 
 def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -> dict:
     print(f"🛡️ Running Remediation Agent (attempt {attempt})...")
-    result = call_claude(
+    result = _call_claude_timed(
         system_prompt="""You are a cybersecurity incident responder.
         Given malware analysis and MITRE techniques, provide:
         1. A YARA detection rule
@@ -173,10 +164,13 @@ def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -
             "confidence": 0.9,
             "needs_rerun": false
         }""",
-        user_message=f"Generate remediation. Static: {json.dumps(static_output)}. MITRE: {json.dumps(mitre_output)}"
+        user_message=f"""Generate remediation for this malware.
+        Static analysis: {json.dumps(static_output)}
+        MITRE techniques: {json.dumps(mitre_output)}
+        Use the MITRE techniques above directly — no need to look them up."""
     )
     if result.get("needs_rerun") and attempt < 2:
-        print("⚠️ Confidence low, rerunning...")
+        print("⚠️ Confidence low, rerunning remediation...")
         return run_remediation(static_output, mitre_output, attempt + 1)
     return result
 

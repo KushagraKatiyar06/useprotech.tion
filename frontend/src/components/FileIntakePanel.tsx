@@ -19,6 +19,11 @@ interface Props {
   fileInfo: FileInfo | null;
 }
 
+// Max specimen size accepted by the backend sandbox intake (50MB).
+const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
+// Extensions this analysis pipeline is built to accept.
+const ALLOWED_EXTENSIONS = ['EXE', 'DLL', 'BAT', 'PS1', 'MSI', 'JS', 'VBS', 'SCR', 'CMD', 'ZIP'];
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 const MODE_STYLE = {
@@ -41,6 +46,7 @@ const MODE_STYLE = {
 export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunning, fileInfo }: Props) {
   const [mode, setMode] = useState<'malware' | 'vt_log'>('malware');
   const [dragOver, setDragOver] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [samples, setSamples] = useState<string[]>([]);
   const [samplesOpen, setSamplesOpen] = useState(false);
   const [results, setResults] = useState<string[]>([]);
@@ -61,6 +67,21 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
 
   function processFile(f: File, overrideMode?: 'malware' | 'vt_log') {
     const ext = f.name.split('.').pop()?.toUpperCase() ?? 'UNK';
+
+    if (f.size === 0) {
+      setError('File is empty.');
+      return;
+    }
+    if (f.size > MAX_FILE_SIZE_BYTES) {
+      setError(`File exceeds max size of ${MAX_FILE_SIZE_BYTES / (1024 * 1024)}MB.`);
+      return;
+    }
+    if (!ALLOWED_EXTENSIONS.includes(ext)) {
+      setError(`Unsupported file type ".${ext}". Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`);
+      return;
+    }
+
+    setError(null);
     const sizeKb = Math.round(f.size / 1024) || 1;
     onFileLoaded({ name: f.name, sizeKb, ext, file: f, mode: overrideMode ?? mode });
   }
@@ -75,6 +96,7 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
   function handleMalwareChange(ev: React.ChangeEvent<HTMLInputElement>) {
     const f = ev.target.files?.[0];
     if (f) processFile(f, 'malware');
+    // Reset so selecting the same file again still fires onChange.
     ev.target.value = '';
   }
 
@@ -172,6 +194,12 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
           </div>
           <input ref={vtInputRef} type="file" accept=".json,application/json" style={{ display: 'none' }} onChange={handleVtChange} />
         </>
+      )}
+
+      {error && (
+        <div className="f9" style={{ color: 'var(--rose, #f43f5e)', marginTop: 8, wordBreak: 'break-word' }}>
+          ⚠ {error}
+        </div>
       )}
 
       {/* ── Loaded file info ── */}

@@ -358,9 +358,20 @@ export default function LinuxSandboxPanel({ staticData, jobId }: Props) {
   }
 
   // ── Patch file ────────────────────────────────────────────────────────────
+  // 2MB — this is a small JS mock-patch script, not the specimen itself.
+  const MAX_PATCH_SIZE_BYTES = 2 * 1024 * 1024;
+
   function handlePatchFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.js')) {
+      e.target.value = '';
+      return;
+    }
+    if (file.size > MAX_PATCH_SIZE_BYTES) {
+      e.target.value = '';
+      return;
+    }
     setPatchFile(file);
     e.target.value = '';
   }

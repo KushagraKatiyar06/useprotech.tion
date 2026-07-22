@@ -4,9 +4,10 @@ google-adk
 google-genai
 
 # Web framework
-fastapi
-uvicorn[standard]
-python-multipart
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+python-multipart>=0.0.6
+slowapi>=0.1.9
 
 # Environment & config
 python-dotenv

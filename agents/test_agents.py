@@ -1,5 +1,4 @@
 import asyncio
-import os
 from dotenv import load_dotenv
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -30,4 +29,5 @@ async def main():
         if event.is_final_response():
             print("✅ ADK is working:", event.content.parts[0].text)
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

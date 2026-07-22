@@ -109,4 +109,5 @@ async def main():
         print(f"\n--- {r['agent']} ---")
         print(r["output"])
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

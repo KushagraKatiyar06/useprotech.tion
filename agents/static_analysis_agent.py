@@ -1,4 +1,3 @@
-import asyncio
 import json
 from dotenv import load_dotenv
 from google.adk.agents import LlmAgent

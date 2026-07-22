@@ -44,6 +44,12 @@ body {
   overflow-x: hidden;
 }
 
+/* Referenced by <body className="grid-bg"> in layout.tsx */
+.grid-bg {
+  background-image: radial-gradient(circle, rgba(99, 179, 237, 0.06) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
 /* Subtle dot-grid background */
 body::before {
   content: '';

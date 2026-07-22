@@ -56,6 +56,11 @@ remediation_agent = LlmAgent(
 )
 
 # --- Loop Agent wrapping Remediation ---
+# NOTE: should_continue() is never wired into remediation_loop — LoopAgent has no
+# exit_condition callback hooked up here, so the loop always runs max_iterations
+# regardless of confidence/needs_rerun. Leaving as-is: wiring this correctly
+# requires knowing the intended ADK exit-condition mechanism (e.g. an
+# exit_loop tool call from a sub-agent), which isn't specified here.
 def should_continue(response) -> bool:
     try:
         text = response.content.parts[0].text
@@ -126,4 +131,5 @@ async def main():
     except Exception as e:
         pass
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

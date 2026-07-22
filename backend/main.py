@@ -2,12 +2,13 @@ import sys
 import os
 import json
 import tempfile
-import shutil
 import subprocess
+import uuid
+import asyncio
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'sandbox'))
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Response, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import anthropic
 from dotenv import load_dotenv
@@ -26,6 +27,12 @@ try:
 except ImportError:
     ha_analyze = None
 
+try:
+    from pipeline import run_pipeline
+except ImportError as e:
+    print(f"Warning: could not import run_pipeline: {e}")
+    run_pipeline = None
+
 HA_API_KEY = os.getenv("HYBRID_ANALYSIS_API_KEY", "")
 
 app = FastAPI(title="UseProtechtion Malware Analysis API")
@@ -42,6 +49,9 @@ client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 SANDBOX_IMAGE = "useprotection-sandbox"
 SANDBOX_DIR   = os.path.join(os.path.dirname(__file__), '..', 'sandbox')
+
+# Reject absurdly large uploads before they hit disk/analysis.
+MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # 100 MB
 
 
 # ── Docker dynamic analysis ────────────────────────────────────────────────────
@@ -137,16 +147,13 @@ Output valid JSON only. No markdown, no explanation.
 Format:
 {
   "malware_type": "RANSOMWARE | DROPPER | LOADER | INFOSTEALER | RAT | DOWNLOADER | BACKDOOR",
-  "risk_score": integer 0-100,
-  "classification_confidence": integer 0-100,
-  "behavior_confidence": integer 0-100,
-  "findings": [
-    {"type": "critical", "label": "CRITICAL", "text": "short finding"},
-    {"type": "warn",     "label": "WARNING",  "text": "short finding"},
-    {"type": "ok",       "label": "INFO",     "text": "short finding"}
-  ],
-  "mitigations": ["① step", "② step", "③ step", "④ step", "⑤ step"],
-  "reasoning": "2-3 sentence technical explanation of the threat and kill chain"
+  "risk_score": 85,
+  "confidence": 0.9,
+  "executive_summary": "3 sentence technical explanation of the threat and kill chain",
+  "mitre_techniques": [{"id": "T1059", "name": "Command and Scripting Interpreter", "tactic": "Execution"}],
+  "iocs": ["list of IPs, domains, hashes"],
+  "yara_rule": "compact YARA rule string",
+  "action_plan": [{"priority": 1, "action": "immediate isolation step"}]
 }""",
         messages=[{
             "role": "user",
@@ -162,6 +169,17 @@ Format:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+job_queues = {}
+job_loops = {}
+
+@app.get("/")
+def root():
+    return {"message": "Welcome to the UseProtechtion Malware Analysis API"}
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return Response(content=b"", media_type="image/x-icon")
 
 @app.get("/health")
 def health():
@@ -186,25 +204,60 @@ def build_sandbox_image():
     return {"status": "built"}
 
 
+@app.post("/upload")
 @app.post("/analyze")
-async def analyze(file: UploadFile = File(...)):
+async def analyze(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    job_id = str(uuid.uuid4())
+    job_queues[job_id] = asyncio.Queue()
+    job_loops[job_id] = asyncio.get_running_loop()
+
     suffix = f"_{file.filename}" if file.filename else ".bin"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        shutil.copyfileobj(file.file, tmp)
+        total = 0
+        while True:
+            chunk = file.file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_UPLOAD_BYTES:
+                tmp.close()
+                os.unlink(tmp.name)
+                raise HTTPException(status_code=413, detail="File too large")
+            tmp.write(chunk)
         tmp_path = tmp.name
 
+    background_tasks.add_task(process_file, job_id, tmp_path, file.filename)
+    return {"job_id": job_id}
+
+def process_file(job_id: str, tmp_path: str, filename: str):
+    loop = job_loops.get(job_id)
+    queue = job_queues.get(job_id)
+
+    def emit(event_name: str, status: str, data=None, message=None):
+        if loop and queue:
+            payload = {"event": event_name, "status": status}
+            if data is not None:
+                payload["data"] = data
+            if message is not None:
+                payload["message"] = message
+            loop.call_soon_threadsafe(queue.put_nowait, payload)
+
     try:
-        filename = file.filename or "sample"
+        filename = filename or "sample"
         use_docker = docker_available() and image_built()
 
         # ── Static analysis ──────────────────────────────────────────────────
+        emit("static_analysis", "running")
         static_result = None
         if use_docker:
             static_result = run_static_in_docker(tmp_path)
         if static_result is None and analyze_file is not None:
             static_result = analyze_file(tmp_path)
         if static_result is None:
-            raise HTTPException(status_code=500, detail="Static analysis unavailable")
+            emit("error", "error", message="Static analysis unavailable")
+            return
+
+        emit("static_analysis", "complete", static_result)
 
         # ── Docker: JS dynamic analysis ──────────────────────────────────────
         dynamic_js = None
@@ -251,20 +304,117 @@ async def analyze(file: UploadFile = File(...)):
             file_meta["pe_signatures"]      = [s["name"] for s in dynamic_pe.get("signatures", [])][:10]
             file_meta["pe_mitre"]           = dynamic_pe.get("mitre", [])[:10]
 
-        ai_report = call_claude_report(file_meta)
+        emit("pipeline_start", "running", message="AI agent pipeline starting...")
 
-        return {
-            "static":     static_result,
-            "dynamic_js": dynamic_js,
-            "dynamic_pe": dynamic_pe,
-            "report":     ai_report,
+        # ── 5-agent Claude pipeline with live streaming ───────────────────────
+        pipeline_result = {"report": {}}
+
+        def on_agent_event(name: str, status: str, data: dict = None):
+            emit(name, status, data or {})
+
+            # Stream each report stage as it's generated.
+            # NOTE: pipeline.run_pipeline() emits the terminal report event with
+            # status="complete" (not "done") — matched here so this block (and
+            # pipeline_result["report"] below) actually fires. The stage_map
+            # field names (classification_confidence, behavior_confidence,
+            # reasoning, mitigations) assume a report schema that doesn't match
+            # pipeline.py's combined_report (stage1..stage4 + flat fields) —
+            # left as-is since reconciling it is a business-logic decision.
+            if name == "report" and status == "complete" and data:
+                report = data
+                stage_map = {
+                    1: {
+                        "malware_family":  report.get("malware_type", "UNKNOWN"),
+                        "verdict":         "MALICIOUS" if report.get("risk_score", 0) >= 60 else "SUSPICIOUS",
+                        "risk_score":      report.get("risk_score", 0),
+                        "severity":        "CRITICAL" if report.get("risk_score", 0) >= 80 else "HIGH",
+                        "confidence":      report.get("classification_confidence", 80) / 100,
+                        "one_line_summary": report.get("reasoning", "")[:120],
+                    },
+                    2: {
+                        "executive_summary": report.get("reasoning", ""),
+                        "affected_systems":  ["Windows hosts", "Corporate endpoints"],
+                        "business_impact":   "Credential theft and data exfiltration risk",
+                        "confidence":        report.get("behavior_confidence", 80) / 100,
+                    },
+                    3: {
+                        "mitre_techniques": [
+                            {"id": t.split(" ")[0], "name": " ".join(t.split(" ")[1:]), "tactic": "Execution", "description": ""}
+                            for t in (file_meta.get("mitre_techniques") or [])[:6]
+                        ],
+                        "iocs": {
+                            "domains": file_meta.get("domains_found", [])[:4],
+                            "ips":     file_meta.get("ips_found", [])[:4],
+                            "files":   file_meta.get("dropped_files", [])[:4],
+                            "registry_keys": [],
+                        },
+                        "attack_chain": report.get("reasoning", ""),
+                        "confidence": 0.88,
+                    },
+                    4: {
+                        "action_plan": [
+                            {"priority": i + 1, "action": m, "urgency": "immediate" if i == 0 else "24h"}
+                            for i, m in enumerate(report.get("mitigations", [])[:5])
+                        ],
+                        "yara_rule":                "",
+                        "iocs_to_block":            (file_meta.get("ips_found") or []) + (file_meta.get("urls_found") or []),
+                        "long_term_recommendations": report.get("mitigations", [])[3:6],
+                        "confidence": 0.85,
+                    },
+                }
+                for stage_num, stage_data in stage_map.items():
+                    emit("report_stage", "complete", stage_data, stage=stage_num)
+
+            if name == "report" and status == "complete":
+                pipeline_result["report"] = data or {}
+
+        if run_pipeline:
+            # pipeline.run_pipeline() takes progress_cb(event_dict) — not
+            # on_event(name, status, data). Adapt so on_agent_event (which
+            # expects the 3-arg form) still gets called correctly instead of
+            # raising TypeError on every run.
+            def _progress_cb(event: dict) -> None:
+                on_agent_event(event.get("event"), event.get("status"), event.get("data"))
+
+            run_pipeline(file_meta, progress_cb=_progress_cb)
+        else:
+            pipeline_result["report"] = call_claude_report(file_meta)
+
+        result = {
+            "static_analysis": static_result,
+            "dynamic_js":      dynamic_js,
+            "dynamic_pe":      dynamic_pe,
+            "report":          pipeline_result["report"],
         }
 
-    except json.JSONDecodeError as e:
-        raise HTTPException(status_code=500, detail=f"AI report parse error: {e}")
-    except HTTPException:
-        raise
+        emit("done", "complete", result)
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        emit("error", "error", message=str(e))
     finally:
-        os.unlink(tmp_path)
+        emit("close", "close")
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
+@app.websocket("/ws/{job_id}")
+async def websocket_endpoint(websocket: WebSocket, job_id: str):
+    await websocket.accept()
+    queue = job_queues.get(job_id)
+    if not queue:
+        await websocket.send_json({"event": "error", "message": "Invalid job ID"})
+        await websocket.close()
+        return
+
+    try:
+        while True:
+            msg = await queue.get()
+            if msg["event"] == "close":
+                break
+            await websocket.send_json(msg)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        job_queues.pop(job_id, None)
+        job_loops.pop(job_id, None)

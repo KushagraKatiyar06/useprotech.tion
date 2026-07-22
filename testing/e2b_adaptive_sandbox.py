@@ -298,7 +298,12 @@ def ask_gemini_for_patch(error_output: str, current_mock: str, iteration: int,
     anticipate upcoming behaviors, not just fix the immediate error.
     mock_broke=True means the previous patch itself broke mock.js.
     """
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    # http_options.timeout (ms) bounds the request so a stalled Gemini call
+    # can't hang the adaptive loop indefinitely.
+    client = genai.Client(
+        api_key=os.environ.get("GEMINI_API_KEY"),
+        http_options=types.HttpOptions(timeout=90_000),
+    )
 
     system_prompt = (
         "You are a malware sandbox engineer. You are building a Windows API mock that runs "
@@ -856,7 +861,12 @@ def extract_and_analyze_payload(filename: str, G: nx.DiGraph):
 
     # Ask Gemini to enumerate behaviors from the decoded PowerShell/payload
     print("\n[PAYLOAD] Asking Gemini to enumerate payload-layer behaviors...")
-    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    # http_options.timeout (ms) bounds the request so a stalled Gemini call
+    # can't hang the adaptive loop indefinitely.
+    client = genai.Client(
+        api_key=os.environ.get("GEMINI_API_KEY"),
+        http_options=types.HttpOptions(timeout=90_000),
+    )
     response = client.models.generate_content(
         model="gemini-2.5-pro",
         config=types.GenerateContentConfig(system_instruction=(
@@ -875,7 +885,13 @@ def extract_and_analyze_payload(filename: str, G: nx.DiGraph):
 
     root_node = filename
     try:
-        behaviors = json.loads(response.text.strip().lstrip("```json").rstrip("```"))
+        # NOTE: str.lstrip()/rstrip() strip any characters in the given SET,
+        # not the literal prefix/suffix — "```json".lstrip("```json") would
+        # silently eat leading 'j'/'s'/'o'/'n' characters too. Use a regex
+        # fence-strip instead (same approach as ask_gemini_for_patch above).
+        cleaned = re.sub(r'^```[a-z]*\n?', '', response.text.strip())
+        cleaned = re.sub(r'\n?```$', '', cleaned).strip()
+        behaviors = json.loads(cleaned)
         type_map = {
             "NETWORK":    ("#FF6B6B", "C2_CONNECT"),
             "REGISTRY":   ("#DA70D6", "REG_ACCESS"),

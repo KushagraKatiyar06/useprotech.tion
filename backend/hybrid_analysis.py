@@ -199,7 +199,10 @@ def _normalize(raw: dict) -> dict:
         "verdict":       raw.get("verdict", ""),
         "threat_score":  raw.get("threat_score"),
         "threat_level":  raw.get("threat_level_human", ""),
-        "malware_family":raw.get("vx_family", "") or raw.get("classifications", [""])[0] if raw.get("classifications") else "",
+        # NOTE: previously "A or B if C else D" parsed as "(A or B) if C else D",
+        # which discarded vx_family whenever classifications was empty. Fixed
+        # with explicit parens so vx_family is used first when present.
+        "malware_family": raw.get("vx_family", "") or (raw.get("classifications", [""])[0] if raw.get("classifications") else ""),
         "sandbox_env":   raw.get("environment_description", ""),
         "processes":     processes,
         "network":       network,

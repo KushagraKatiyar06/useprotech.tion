@@ -139,6 +139,7 @@ body::before {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 16px 32px;
   border-bottom: 1px solid var(--border);
   background: rgba(6, 12, 26, 0.95);
@@ -155,6 +156,14 @@ body::before {
   color: var(--text);
   letter-spacing: 4px;
   text-transform: uppercase;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .hud-header { padding: 12px 16px; }
+  .hud-logo { font-size: 13px; letter-spacing: 2px; }
+  .start-over-btn { padding: 6px 10px; font-size: 9px; }
 }
 
 .hud-logo span {
@@ -231,6 +240,11 @@ body::before {
 .pre-run-wrap > * {
   width: 100%;
   max-width: 480px;
+  /* Flex items default to min-width: auto, which floors their shrunk size
+     at their content's intrinsic width regardless of width/max-width —
+     without this override the panel refuses to shrink below that floor on
+     narrow viewports and overflows past the edge instead of fitting. */
+  min-width: 0;
 }
 
 /* ── MAIN GRID ── */
@@ -253,6 +267,20 @@ body::before {
   z-index: 1;
 }
 
+/* Below 860px, File Intake and Behavioral Analysis stack into one column
+   instead of sitting side by side — dashboard/page.tsx's useIsNarrow()
+   switches those two children's inline gridColumn/gridRow to match (a plain
+   CSS override can't reach them: they're positioned via inline style, which
+   wins over an external stylesheet without !important). This breakpoint is
+   the single source of truth for where that switch happens. */
+@media (max-width: 860px) {
+  .main-grid { grid-template-columns: 1fr; padding: 16px; gap: 14px; }
+}
+
+@media (max-width: 480px) {
+  .main-grid { padding: 12px; gap: 10px; }
+}
+
 /* ── PANEL BASE ── */
 .panel {
   border: 1px solid var(--border);
@@ -261,6 +289,16 @@ body::before {
   padding: 20px;
   position: relative;
   overflow: hidden;
+  /* Same min-width: auto floor as flex items applies to grid items — a
+     panel placed in a grid column (e.g. LinuxSandboxPanel's full-width
+     row) can otherwise force that column wider than the viewport on
+     narrow screens. Defensive default; flex/grid children that need a
+     *different* floor still set their own minWidth inline. */
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .panel { padding: 14px; }
 }
 
 /* Top accent line */

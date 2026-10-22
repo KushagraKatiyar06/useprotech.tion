@@ -16,6 +16,7 @@ import {
   type Stage4Data,
 } from '@/components/ThreatReportPanel';
 import { useRunActive } from '@/contexts/RunActiveContext';
+import { useIsNarrow } from '@/lib/useIsNarrow';
 
 import dynamic from 'next/dynamic';
 const LinuxSandboxPanel = dynamic(() => import('@/components/LinuxSandboxPanel'), { ssr: false });
@@ -73,6 +74,11 @@ const AGENT_KEYS = new Set(['ingestion', 'static_analysis', 'mitre_mapping', 're
 
 export default function Dashboard() {
   const { setActive: setWiresActive } = useRunActive();
+  // .main-grid collapses to a single column below 860px (see globals.css) —
+  // the two main children are positioned via inline gridColumn/gridRow
+  // below (not CSS classes), so the column collapse needs a matching JS
+  // switch here to stack them instead of overlapping in the same cell.
+  const isNarrow = useIsNarrow();
   const [fileInfo, setFileInfo] = useState<FileInfo | null>(null);
   const [analysisRunning, setAnalysisRunning] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
@@ -475,10 +481,15 @@ export default function Dashboard() {
             <motion.div
               layout
               transition={{ duration: 0.55, ease: [0.65, 0, 0.35, 1] }}
-              style={{ gridRow: 1, gridColumn: intakeCollapsed ? '1 / -1' : 2, minWidth: 0 }}
+              style={
+                isNarrow
+                  ? { gridRow: 2, gridColumn: 1, minWidth: 0 }
+                  : { gridRow: 1, gridColumn: intakeCollapsed ? '1 / -1' : 2, minWidth: 0 }
+              }
             >
               <BehavioralAnalysisPanel
                 key={runSeq}
+                isNarrow={isNarrow}
                 fileName={fileInfo?.name}
                 currentStage={currentStage}
                 stageDone={stageDone}
@@ -496,7 +507,12 @@ export default function Dashboard() {
                 LinuxSandboxPanel renders its own Panel heading, so no separate
                 label is needed here (that used to duplicate it). Starts
                 automatically, in parallel with static analysis. */}
-            <div style={{ gridColumn: '1 / -1' }}>
+            {/* Explicit gridRow, not left to auto-placement: once File Intake
+                unmounts (intakeCollapsed) its row becomes vacant, and an
+                auto-placed item greedily fills the first open cell — on the
+                narrow single-column layout that would pull this panel above
+                Behavioral Analysis instead of staying below it. */}
+            <div style={{ gridColumn: '1 / -1', gridRow: isNarrow ? 3 : 2, minWidth: 0 }}>
               <LinuxSandboxPanel
                 staticData={staticData}
                 jobId={jobId}

@@ -291,28 +291,47 @@ global.GetObject = function(path) {
 # Gemini patch generator — gemini-2.5-pro + MITRE context + API catalog
 # ---------------------------------------------------------------------------
 def ask_gemini_for_patch(error_output: str, current_mock: str, iteration: int,
-                         mock_broke: bool = False) -> str:
+                         mock_broke: bool = False, user_guidance: str | None = None) -> str:
     """
-    Ask Gemini 2.5 Pro to generate a JS patch for the current crash.
-    Gemini receives full MITRE TTP context + Windows API catalog so it can
-    anticipate upcoming behaviors, not just fix the immediate error.
-    mock_broke=True means the previous patch itself broke mock.js.
+    Ask Gemini for the next version of mock.js that fixes the current crash.
+
+    Returns the COMPLETE replacement file — NOT a fragment to append. Patches
+    used to be appended as independent text blobs onto the end of mock.js
+    (current_mock = current_mock + patch). That's fundamentally fragile for a
+    language where `const`/`let` can't be redeclared: Gemini would write
+    perfectly valid code in isolation (e.g. "const catchAll = ...") that
+    became a duplicate-declaration SyntaxError the instant it landed after an
+    earlier patch that already declared the same thing — and once that
+    happens the loop is stuck forever, since every subsequent patch gets
+    appended after the same unremovable duplicate. Sending the full current
+    file and asking for one coherent file back removes that whole failure
+    class by construction: there's no concatenation step left for a
+    duplicate to sneak through, because Gemini owns the entire file each time
+    rather than one isolated fragment of it.
     """
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 
     system_prompt = (
-        "You are a malware sandbox engineer. You are building a Windows API mock that runs "
-        "in Node.js (Linux) so a security researcher can observe malware behavior without it crashing.\n\n"
+        "You are a malware sandbox engineer maintaining a single Windows API mock file "
+        "(mock.js) that runs in Node.js (Linux) so a security researcher can observe "
+        "malware behavior without it crashing.\n\n"
 
-        "=== CRITICAL NODE.JS ENVIRONMENT RULES ===\n"
+        "=== YOUR JOB ===\n"
+        "You will be given the CURRENT COMPLETE mock.js and the crash it just caused. "
+        "Return the ENTIRE corrected file — not a diff, not a fragment, not just the "
+        "changed part. You are the sole author of this file; nothing gets concatenated "
+        "onto your output afterward, so a duplicate declaration can only happen if you "
+        "write one yourself within the file you return.\n\n"
+
+        "=== RULES ===\n"
         "- This is Node.js on Linux. There is NO ActiveXObject, WScript, GetObject, Shell natively.\n"
-        "- You MUST use 'global.X = ...' to define any Windows global.\n"
-        "- NEVER reference a global at top level of a patch unless you defined it in that same patch.\n"
-        "- If extending an existing global, guard it: if (typeof X !== 'undefined') { ... }\n"
-        "- catchAll Proxy handler is always in scope if it appears in the current mock.\n"
+        "- Define every Windows global exactly once, with 'global.X = ...'.\n"
+        "- Preserve every stub that's already working in the current file — only change what's "
+        "needed to fix this crash, and add what's needed next. Do not drop existing functionality.\n"
         "- Every stub MUST log via console.log with a [MOCK PATCH] prefix.\n"
         "- Never throw. Always return a sensible Windows API value.\n"
-        "- Output ONLY valid JavaScript — no markdown, no code fences, no explanations.\n\n"
+        "- Output ONLY valid JavaScript — the complete file. No markdown, no code fences, "
+        "no explanations, no comments describing what you changed.\n\n"
 
         + MITRE_TTP_CONTEXT + "\n\n"
         + WINDOWS_API_CATALOG
@@ -320,10 +339,8 @@ def ask_gemini_for_patch(error_output: str, current_mock: str, iteration: int,
 
     if mock_broke:
         user_msg = (
-            f"=== ITERATION {iteration}: YOUR PATCH BROKE mock.js ===\n"
-            f"Error in mock.js (your patch caused this):\n{error_output.strip()}\n\n"
-            f"Root cause: your patch referenced a global that wasn't defined yet.\n"
-            f"Fix: DEFINE the global with 'global.X = ...' instead of referencing it.\n\n"
+            f"=== ITERATION {iteration}: YOUR LAST VERSION OF mock.js ITSELF CRASHED ===\n"
+            f"Error (in mock.js, not malware.js):\n{error_output.strip()}\n\n"
         )
     else:
         user_msg = (
@@ -331,13 +348,19 @@ def ask_gemini_for_patch(error_output: str, current_mock: str, iteration: int,
             f"{error_output.strip()}\n\n"
         )
 
+    if user_guidance:
+        user_msg += (
+            f"=== HUMAN GUIDANCE FOR THIS ITERATION — follow this over your own instinct "
+            f"where they conflict ===\n{user_guidance.strip()}\n\n"
+        )
+
     user_msg += (
-        f"=== CURRENT mock.js (last 3000 chars) ===\n"
-        f"{current_mock[-3000:]}\n\n"
+        f"=== CURRENT COMPLETE mock.js ===\n"
+        f"{current_mock}\n\n"
         f"Using the MITRE TTP context and API catalog in your system prompt as reference, "
-        f"generate the JS patch that fixes this crash AND stubs any APIs this malware will "
-        f"likely call next based on its known behavior chain. Keep it tight — fix what's "
-        f"broken and pre-stub the next logical step."
+        f"return the complete corrected mock.js: fix this crash, keep everything that already "
+        f"worked, and stub any APIs this malware will likely call next based on its known "
+        f"behavior chain."
     )
 
     response = client.models.generate_content(
@@ -345,12 +368,47 @@ def ask_gemini_for_patch(error_output: str, current_mock: str, iteration: int,
         config=types.GenerateContentConfig(system_instruction=system_prompt),
         contents=user_msg,
     )
-    patch = response.text.strip()
+    updated_mock = response.text.strip()
 
     # Strip accidental markdown fences
-    patch = re.sub(r'^```[a-z]*\n?', '', patch)
-    patch = re.sub(r'\n?```$', '', patch)
-    return patch.strip()
+    updated_mock = re.sub(r'^```[a-z]*\n?', '', updated_mock)
+    updated_mock = re.sub(r'\n?```$', '', updated_mock)
+    return updated_mock.strip()
+
+
+def ask_gemini_to_diagnose(error_output: str, current_mock: str, iteration: int) -> str:
+    """
+    A separate, code-free call for the human-in-the-loop pause: explain in
+    plain English why this keeps failing and what approaches might actually
+    work, instead of just generating another patch blind. Deliberately asks
+    for prose, not JS, so it reads as a diagnosis a person can act on rather
+    than code they have to reverse-engineer the reasoning from.
+    """
+    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    declared_globals = sorted(set(re.findall(r'global\.(\w+)\s*=', current_mock)))
+
+    system_prompt = (
+        "You are a malware sandbox engineer explaining a stuck debugging loop to a "
+        "colleague who is about to take over. Be specific and concise — 3-5 short "
+        "sentences. Name the actual symptom, your best guess at the root cause, and one "
+        "or two concrete things worth trying that the automated loop hasn't tried yet. "
+        "No code, no markdown, plain prose only."
+    )
+    user_msg = (
+        f"Iteration {iteration} has failed with the same error repeatedly:\n"
+        f"{error_output.strip()[:1500]}\n\n"
+        f"Globals already defined in mock.js: "
+        f"{', '.join(declared_globals) if declared_globals else '(none yet)'}\n\n"
+        f"Current mock.js:\n{current_mock}\n\n"
+        f"Why do you think this keeps happening, and what would you try differently?"
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-pro",
+        config=types.GenerateContentConfig(system_instruction=system_prompt),
+        contents=user_msg,
+    )
+    return response.text.strip()
 
 
 # ---------------------------------------------------------------------------

@@ -2,11 +2,11 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import dynamic from 'next/dynamic';
-
-const FloatingLines = dynamic(() => import('@/components/FloatingLines'), { ssr: false });
+import { useRouter } from 'next/navigation';
+import { navigateWithFade } from '@/lib/pageTransition';
 
 export default function Home() {
+  const router = useRouter();
   const [clock, setClock] = useState('');
 
   useEffect(() => {
@@ -16,22 +16,15 @@ export default function Home() {
     return () => clearInterval(id);
   }, []);
 
+  const scrollToOverview = () => {
+    document.getElementById('overview')?.scrollIntoView({ behavior: 'smooth' });
+  };
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-      {/* FloatingLines background */}
-      <div style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none', opacity: 0.35 }}>
-        <FloatingLines
-          enabledWaves={['top', 'middle', 'bottom']}
-          lineCount={5}
-          lineDistance={5}
-          bendRadius={5}
-          bendStrength={-0.5}
-          interactive={true}
-          parallax={true}
-          linesGradient={['#3b82f6', '#8b5cf6', '#06b6d4']}
-          mixBlendMode="screen"
-        />
-      </div>
+      {/* FloatingLines now renders globally from layout.tsx (GlobalBackdrop)
+          so it's one persistent canvas across every page instead of
+          restarting per route — see RunActiveContext/pageTransition.ts. */}
       {/* Dark overlay to keep text readable */}
       <div style={{ position: 'fixed', inset: 0, zIndex: 1, pointerEvents: 'none', background: 'rgba(6,12,26,0.55)' }} />
       {/* Nav */}
@@ -47,21 +40,24 @@ export default function Home() {
         top: 0,
         zIndex: 200,
       }}>
-        <div style={{
-          fontFamily: 'Orbitron, monospace',
-          fontWeight: 900,
-          fontSize: '14px',
-          letterSpacing: '3px',
-          color: '#e2e8f0',
-          textTransform: 'uppercase',
-        }}>
-          Use<span style={{ color: '#3b82f6' }}>Protection</span>
-        </div>
+        <Link href="/" style={{ display: 'flex', alignItems: 'center', gap: '10px', textDecoration: 'none' }}>
+          <img src="/icon.svg" alt="UseProtection" width={28} height={28} />
+          <div style={{
+            fontFamily: 'Orbitron, monospace',
+            fontWeight: 900,
+            fontSize: '14px',
+            letterSpacing: '3px',
+            color: '#e2e8f0',
+            textTransform: 'uppercase',
+          }}>
+            Use<span style={{ color: '#3b82f6' }}>Protection</span>
+          </div>
+        </Link>
       </nav>
 
       {/* Hero */}
       <main style={{
-        flex: 1,
+        minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -101,21 +97,6 @@ export default function Home() {
           pointerEvents: 'none',
         }} />
 
-        {/* Badge */}
-        <div style={{
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize: '10px',
-          letterSpacing: '3px',
-          textTransform: 'uppercase',
-          color: '#3b82f6',
-          border: '1px solid rgba(59,130,246,0.3)',
-          borderRadius: '20px',
-          padding: '6px 18px',
-          marginBottom: '40px',
-          background: 'rgba(59,130,246,0.06)',
-        }}>
-          AI-Powered Malware Analysis
-        </div>
 
         {/* Title */}
         <h1 style={{
@@ -134,21 +115,10 @@ export default function Home() {
           }}>Protection</span>
         </h1>
 
-        {/* Subtitle */}
-        <p style={{
-          fontSize: '16px',
-          color: '#94a3b8',
-          maxWidth: '520px',
-          lineHeight: 1.8,
-          marginBottom: '52px',
-          fontWeight: 400,
-        }}>
-          Detonate suspicious files in an isolated sandbox. Get instant MITRE ATT&CK mapping, behavioral analysis, and AI-generated threat reports.
-        </p>
 
         {/* CTA */}
         <div style={{ display: 'flex', gap: '14px', flexWrap: 'wrap', justifyContent: 'center' }}>
-          <Link href="/dashboard" style={{
+          <button onClick={scrollToOverview} style={{
             fontFamily: 'Orbitron, monospace',
             fontSize: '10px',
             letterSpacing: '2px',
@@ -158,14 +128,100 @@ export default function Home() {
             border: '1px solid #3b82f6',
             borderRadius: '8px',
             padding: '14px 32px',
-            textDecoration: 'none',
+            cursor: 'pointer',
             boxShadow: '0 0 24px rgba(59,130,246,0.35)',
           }}>
             Get Started
-          </Link>
+          </button>
         </div>
 
       </main>
+
+      {/* Overview */}
+      <section id="overview" className="overview-section">
+        <div className="overview-wrap">
+          <h2 className="overview-heading">
+            From suspicious file to full report, automatically
+          </h2>
+          <p className="overview-sub">
+            Upload a file and an AI agent pipeline takes it from there, analyzing,
+            mapping, and reporting on the threat while you watch it happen live.
+          </p>
+
+          <div className="overview-grid">
+            {[
+              {
+                step: '01',
+                title: 'Upload a File',
+                desc: "Drop any suspicious file into the dashboard to kick off a fully automated analysis, no setup required.",
+                accent: '#3b82f6',
+                glow: '0 0 16px rgba(59,130,246,0.4)',
+                border: 'rgba(59,130,246,0.35)',
+              },
+              {
+                step: '02',
+                title: 'Agent Pipeline Runs',
+                desc: 'AI agents analyze the file in a sandboxed environment in parallel: static analysis, MITRE ATT&CK mapping, and remediation planning.',
+                accent: '#8b5cf6',
+                glow: '0 0 16px rgba(139,92,246,0.4)',
+                border: 'rgba(139,92,246,0.35)',
+              },
+              {
+                step: '03',
+                title: 'Watch It Live',
+                desc: 'Every finding streams straight to your dashboard in real time over WebSocket, so you see the investigation as it unfolds.',
+                accent: '#06b6d4',
+                glow: '0 0 16px rgba(6,182,212,0.35)',
+                border: 'rgba(6,182,212,0.35)',
+              },
+              {
+                step: '04',
+                title: 'Get Your Report',
+                desc: 'Walk away with a complete threat report and a downloadable PDF, ready to share with your team.',
+                accent: '#10b981',
+                glow: '0 0 16px rgba(16,185,129,0.35)',
+                border: 'rgba(16,185,129,0.35)',
+              },
+            ].map((card) => (
+              <div
+                key={card.step}
+                className="overview-card"
+                style={{
+                  '--accent': card.accent,
+                  '--accent-glow': card.glow,
+                  '--accent-border': card.border,
+                } as React.CSSProperties}
+              >
+                <div className="overview-step">{card.step}</div>
+                <div className="overview-card-title">{card.title}</div>
+                <div className="overview-card-desc">{card.desc}</div>
+              </div>
+            ))}
+          </div>
+
+          <Link
+            href="/dashboard"
+            onClick={e => { e.preventDefault(); navigateWithFade(router.push, '/dashboard'); }}
+            style={{
+              display: 'inline-block',
+              marginTop: '56px',
+              fontFamily: 'Orbitron, monospace',
+              fontSize: '10px',
+              letterSpacing: '2px',
+              textTransform: 'uppercase',
+              color: '#ffffff',
+              background: '#3b82f6',
+              border: '1px solid #3b82f6',
+              borderRadius: '8px',
+              padding: '14px 32px',
+              textDecoration: 'none',
+              boxShadow: '0 0 24px rgba(59,130,246,0.35)',
+            }}
+          >
+             Start
+          </Link>
+        </div>
+      </section>
 
       {/* Footer */}
       <footer style={{

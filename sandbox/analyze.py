@@ -426,16 +426,31 @@ def score_and_level(behaviors: list) -> tuple:
 
 # ─── PE analysis entry point ─────────────────────────────────────────────────
 
-def analyze_pe(filepath: str) -> dict:
+def analyze_pe(filepath: str, emit=None) -> dict:
+    total_steps = 7
+    _count = [0]
+
+    def step(msg: str) -> None:
+        _count[0] += 1
+        if emit:
+            emit(msg, _count[0], total_steps)
+
     with open(filepath, 'rb') as f:
         raw = f.read()
 
+    step('Extracting printable strings...')
     strings_list = run_strings(filepath)
+    step('Parsing PE structure (sections, imports, exports)...')
     pe_data      = run_pefile(filepath)
+    step('Reading embedded metadata (exiftool)...')
     exif_data    = run_exiftool(filepath)
+    step('Scanning for embedded files/signatures (binwalk)...')
     binwalk_sigs = run_binwalk(filepath)
+    step('Matching YARA rules...')
     yara_matches = run_yara(filepath)
+    step('Checking for .NET assembly internals...')
     dotnet       = run_dotnet_analysis(filepath)
+    step('Classifying behaviors and mapping to MITRE ATT&CK...')
 
     all_imports = pe_data.get('imports', [])
     suspicious_imports = [i for i in all_imports
@@ -668,20 +683,59 @@ def classify_pe_behaviors_extended(pe_data: dict, strings_list: list,
 
 # ─── Script/JS analysis entry point ──────────────────────────────────────────
 
-def analyze_script(filepath: str, file_type: str) -> dict:
+# jsbeautifier has no internal timeout, and real-world malware JS is
+# sometimes a multi-megabyte blob on a handful of lines (one sample in this
+# project's own testing/samples/ is ~4MB across 1,650 lines — avg 2,500+
+# chars/line). Reformatting input shaped like that can take jsbeautifier
+# effectively forever and pegs a CPU core the whole time, which silently
+# hangs the entire static-analysis stage (and anything waiting on it) with
+# no error and no way to tell it apart from a slow-but-working run.
+# Everything downstream (IOC/regex extraction, dangerous-function matching)
+# works the same on unformatted text, so falling back to it costs nothing
+# but readability of a field nothing else currently displays.
+_BEAUTIFY_SIZE_LIMIT = 250_000   # chars — above this, skip beautify outright
+_BEAUTIFY_TIMEOUT = 12.0         # seconds — backstop for slow-but-under-limit input
+
+
+def _safe_beautify(code: str) -> str:
     import jsbeautifier
+    if len(code) > _BEAUTIFY_SIZE_LIMIT:
+        return code
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(jsbeautifier.beautify, code)
+        try:
+            return future.result(timeout=_BEAUTIFY_TIMEOUT)
+        except concurrent.futures.TimeoutError:
+            # The thread itself can't be killed and keeps running in the
+            # background until it finishes on its own — harmless since we
+            # never touch its result, just don't block on it any longer.
+            return code
+
+
+def analyze_script(filepath: str, file_type: str, emit=None) -> dict:
+    total_steps = 5
+    _count = [0]
+
+    def step(msg: str) -> None:
+        _count[0] += 1
+        if emit:
+            emit(msg, _count[0], total_steps)
 
     with open(filepath, 'r', errors='ignore') as f:
         raw_code = f.read()
 
+    step('Running deobfuscation passes...')
     # Deobfuscation passes
     deobfuscated = raw_code.replace('IMLRHNEGA', '')
     deobfuscated = re.sub(r'%{2,}', '', deobfuscated)
     deobfuscated = deobfuscated.replace('\\x5c', '\\')
-    beautified = jsbeautifier.beautify(deobfuscated)
+    beautified = _safe_beautify(deobfuscated)
 
+    step('Extracting IOCs (URLs, IPs, domains, registry keys)...')
     iocs = extract_iocs(beautified)
 
+    step('Scanning for embedded AES keys and Base64 payloads...')
     possible_aes_keys = list(set(re.findall(r'["\']([A-Za-z0-9+/]{43}=)["\']', beautified)))
     possible_aes_ivs  = list(set(re.findall(r'["\']([A-Za-z0-9+/]{24})["\']', beautified)))
     b64_blobs = re.findall(r'[A-Za-z0-9+/]{100,}={0,2}', beautified)
@@ -699,10 +753,12 @@ def analyze_script(filepath: str, file_type: str) -> dict:
     ]
     found_dangerous = [d for d in dangerous if d.lower() in beautified.lower()]
 
+    step('Classifying behaviors and mapping to MITRE ATT&CK...')
     behaviors = _classify_script_behaviors(beautified, found_dangerous)
     mitre     = map_to_mitre(behaviors)
     _, threat_level = score_and_level(behaviors)
 
+    step('Matching YARA rules...')
     yara_matches = run_yara(filepath)
 
     return {
@@ -794,14 +850,16 @@ def _classify_script_behaviors(code: str, funcs: list) -> list:
 
 # ─── Main entry point ─────────────────────────────────────────────────────────
 
-def analyze_file(filepath: str) -> dict:
+def analyze_file(filepath: str, emit=None) -> dict:
+    """emit, if given, is called as emit(message, step, total) before each
+    real sub-step starts — e.g. for live progress during a long run."""
     file_type = detect_file_type(filepath)
     file_name = Path(filepath).name
 
     if file_type == 'PE':
-        result = analyze_pe(filepath)
+        result = analyze_pe(filepath, emit=emit)
     else:
-        result = analyze_script(filepath, file_type)
+        result = analyze_script(filepath, file_type, emit=emit)
 
     # Always include these top-level fields
     result['file_name'] = file_name

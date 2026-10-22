@@ -1,6 +1,4 @@
 # AI / Agent frameworks
-anthropic
-google-adk
 google-genai
 
 # Web framework

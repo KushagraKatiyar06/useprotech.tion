@@ -4,7 +4,7 @@ An AI-powered malware analysis platform. Drop in a suspicious file (or a VirusTo
 
 🏆 **Winner — Cybersecurity & AI Track (sponsored by NextEra)** at HackUSF. [View on Devpost](https://devpost.com/software/use-protech-tion)
 
-![Dashboard overview](screenshot/dashboard-overview.png)
+![Landing page](screenshot/landing-hero.png)
 
 ## What it does
 
@@ -13,6 +13,10 @@ An AI-powered malware analysis platform. Drop in a suspicious file (or a VirusTo
 3. The suspicious file is detonated live inside an **isolated E2B sandbox**. If it crashes on a missing API/environment (common with obfuscated droppers), Gemini reads the crash, generates a JS patch to mock the missing behavior, and re-runs — adapting automatically instead of giving up, with a human-in-the-loop view into every patch.
 4. Everything streams live over WebSocket to the dashboard: agent progress, raw pipeline logs, and the sandbox's live console, syscall/behavior tree, and generated patches.
 5. A multi-stage report (threat ID → executive summary → technical breakdown → remediation plan) builds progressively and exports to a downloadable PDF.
+
+![How it works](screenshot/landing-how-it-works.png)
+
+![Dashboard overview](screenshot/dashboard-overview.png)
 
 ## Features
 
@@ -50,7 +54,21 @@ An AI-powered malware analysis platform. Drop in a suspicious file (or a VirusTo
 - Node.js 18+
 - API keys: Google Gemini, E2B, (optional) VirusTotal
 
-### Backend
+### Windows — one-command setup
+
+Double-click (or run) **`start.bat`** in the project root. It will:
+
+1. Create a Python virtual environment (if one doesn't exist yet)
+2. Install backend dependencies (`pip install -r requirements.txt`)
+3. Create `.env` from `.env.example` and open it in Notepad so you can drop in your API keys
+4. Install frontend dependencies (`npm install`)
+5. Start the backend (`:8000`) and frontend dev server (`:3000`) in their own windows, then open the app in your browser
+
+Safe to re-run any time — it skips steps that are already done and just restarts the servers.
+
+### Manual setup (Mac / Linux / Windows)
+
+**Backend**
 
 ```bash
 python -m venv venv
@@ -62,21 +80,15 @@ cp .env.example .env            # add your API keys
 uvicorn app:app --reload
 ```
 
-### Frontend
+**Frontend**
 
 ```bash
 cd frontend
 npm install
-npm run build    # produces frontend/out/ (static export)
-```
-
-Then visit `http://localhost:8000`.
-
-For frontend dev mode:
-
-```bash
 npm run dev      # http://localhost:3000
 ```
+
+The backend serves the API/WebSocket on `:8000`; the frontend dev server on `:3000` talks to it automatically. For a production static build instead of dev mode, run `npm run build` (produces `frontend/out/`) and visit `http://localhost:8000` — the backend serves the static export directly.
 
 ## Contributors
 

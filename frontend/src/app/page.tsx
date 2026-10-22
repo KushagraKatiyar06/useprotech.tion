@@ -102,12 +102,18 @@ export default function Home() {
         <h1 style={{
           fontFamily: 'Orbitron, monospace',
           fontWeight: 900,
-          fontSize: 'clamp(42px, 8vw, 80px)',
+          // 42px was too high a floor — at narrow phone widths 8vw stays
+          // below it, so the floor wins and the full "UseProtection"
+          // string overflows past the viewport edge. Lowering the floor to
+          // 24px lets it keep shrinking down to small phones; 8vw already
+          // exceeds 42px past ~525px width, so nothing above that changes.
+          fontSize: 'clamp(24px, 8vw, 80px)',
           letterSpacing: '4px',
           textTransform: 'uppercase',
           lineHeight: 1.1,
           marginBottom: '28px',
           color: '#ffffff',
+          overflowWrap: 'break-word',
         }}>
           Use<span style={{
             color: '#3b82f6',

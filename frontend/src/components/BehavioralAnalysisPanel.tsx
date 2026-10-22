@@ -79,6 +79,9 @@ interface Props {
   onSkipVirusTotal: () => void;
   reportStages: ReportStages;
   terminalLogs: string[];
+  /** Below the dashboard's 860px breakpoint — Agents/Raw Logs/Reports stack
+   *  into one column instead of sharing a row (see the main render below). */
+  isNarrow?: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -102,9 +105,14 @@ function stageClass(i: number, currentStage: number, stageDone: boolean[]) {
 // `flex`/width transition (not Framer's `layout`) drives the resize so it
 // interpolates the real size instead of scaling content, which is what
 // caused the jitter earlier.
-export function Widget({ accent, label, badge, live, bgAlpha = 0.035, minimized, onToggleMinimize, style, children }: {
+export function Widget({ accent, label, badge, live, bgAlpha = 0.035, minimized, onToggleMinimize, horizontal, style, children }: {
   accent: string; label: string; badge?: string; live?: boolean; bgAlpha?: number;
   minimized?: boolean; onToggleMinimize?: () => void;
+  /** Minimized strip lays out as a short horizontal bar with normal-orientation
+   *  text instead of a tall vertical-text sliver — used when these widgets are
+   *  stacked in a column (mobile) rather than sharing a row (desktop), where a
+   *  vertical strip would make no sense next to full-width siblings. */
+  horizontal?: boolean;
   style?: React.CSSProperties; children: React.ReactNode;
 }) {
   const { active: wiresActive } = useRunActive();
@@ -119,8 +127,11 @@ export function Widget({ accent, label, badge, live, bgAlpha = 0.035, minimized,
         className="clickable"
         style={{
           border, borderRadius: 10, background: bg, cursor: 'pointer',
-          display: 'flex', flexDirection: 'column', alignItems: 'center',
-          justifyContent: 'flex-start', gap: 10, padding: '14px 0',
+          display: 'flex',
+          flexDirection: horizontal ? 'row' : 'column',
+          alignItems: 'center',
+          justifyContent: horizontal ? 'flex-start' : 'flex-start',
+          gap: 10, padding: horizontal ? '10px 14px' : '14px 0',
           transition: 'flex 0.35s cubic-bezier(0.65,0,0.35,1)',
           ...style,
         }}
@@ -129,7 +140,10 @@ export function Widget({ accent, label, badge, live, bgAlpha = 0.035, minimized,
           className={live ? 'blink' : undefined}
           style={{ width: 6, height: 6, borderRadius: '50%', background: `var(--${accent})`, flexShrink: 0 }}
         />
-        <span style={{
+        <span style={horizontal ? {
+          fontFamily: "'JetBrains Mono', monospace", fontSize: 10, letterSpacing: 1.5,
+          color: `var(--${accent})`, textTransform: 'uppercase',
+        } : {
           writingMode: 'vertical-rl', transform: 'rotate(180deg)',
           fontFamily: "'JetBrains Mono', monospace", fontSize: 9, letterSpacing: 1.5,
           color: `var(--${accent})`, textTransform: 'uppercase', whiteSpace: 'nowrap',
@@ -349,11 +363,12 @@ function ParallelLabel() {
 
 // ── AGENTS tab ────────────────────────────────────────────────────────────────
 
-function AgentsTab({ agentStatuses, agentElapsed, currentStage, stageDone, sandboxStep, sandboxResult, onSkipVirusTotal }: {
+function AgentsTab({ agentStatuses, agentElapsed, currentStage, stageDone, sandboxStep, sandboxResult, onSkipVirusTotal, isNarrow }: {
   agentStatuses: AgentStatuses; agentElapsed: Record<string, number>;
   currentStage: number; stageDone: boolean[];
   sandboxStep: SandboxStep | null; sandboxResult: string | null;
   onSkipVirusTotal: () => void;
+  isNarrow?: boolean;
 }) {
   const a = agentStatuses;
 
@@ -376,8 +391,8 @@ function AgentsTab({ agentStatuses, agentElapsed, currentStage, stageDone, sandb
           static-analysis result, and its own upload+poll loop can take
           minutes, so there's no reason to make either wait on the other. */}
       <ParallelLabel />
-      <div style={{ display: 'flex', gap: 16 }}>
-        <AgentNode label="SANDBOX STATIC ANALYSIS" status={sandboxStatus} detail={sandboxDetail} accent={AGENT_ACCENT.sandbox} compact fill />
+      <div style={{ display: 'flex', flexDirection: isNarrow ? 'column' : 'row', gap: 16 }}>
+        <AgentNode label="SANDBOX STATIC ANALYSIS" status={sandboxStatus} detail={sandboxDetail} accent={AGENT_ACCENT.sandbox} compact fill={!isNarrow} />
         <AgentNode
           label="VIRUSTOTAL"
           status={a.virustotal.status}
@@ -386,7 +401,7 @@ function AgentsTab({ agentStatuses, agentElapsed, currentStage, stageDone, sandb
           onSkip={onSkipVirusTotal}
           accent={AGENT_ACCENT.virustotal}
           compact
-          fill
+          fill={!isNarrow}
         />
       </div>
       <Connector type="join" />
@@ -399,9 +414,9 @@ function AgentsTab({ agentStatuses, agentElapsed, currentStage, stageDone, sandb
           (see agents/pipeline.py's ThreadPoolExecutor around
           run_static_analysis + run_mitre_mapping) */}
       <ParallelLabel />
-      <div style={{ display: 'flex', gap: 16 }}>
-        <AgentNode label="MALWARE CLASSIFIER" status={a.static_analysis.status} detail={a.static_analysis.detail} elapsedSeconds={agentElapsed.static_analysis} accent={AGENT_ACCENT.static_analysis} compact fill />
-        <AgentNode label="MITRE MAPPING"      status={a.mitre_mapping.status}   detail={a.mitre_mapping.detail}   elapsedSeconds={agentElapsed.mitre_mapping} accent={AGENT_ACCENT.mitre_mapping} compact fill />
+      <div style={{ display: 'flex', flexDirection: isNarrow ? 'column' : 'row', gap: 16 }}>
+        <AgentNode label="MALWARE CLASSIFIER" status={a.static_analysis.status} detail={a.static_analysis.detail} elapsedSeconds={agentElapsed.static_analysis} accent={AGENT_ACCENT.static_analysis} compact fill={!isNarrow} />
+        <AgentNode label="MITRE MAPPING"      status={a.mitre_mapping.status}   detail={a.mitre_mapping.detail}   elapsedSeconds={agentElapsed.mitre_mapping} accent={AGENT_ACCENT.mitre_mapping} compact fill={!isNarrow} />
       </div>
       <Connector type="join" />
 
@@ -520,7 +535,7 @@ function LogsTab({ terminalLogs, agentStatuses, agentElapsed, sandboxStep }: {
 // mounts once `s` is available (the accordion item it lives in is itself
 // conditionally rendered), so there's no "reset gauge on clear" case to
 // handle here the way the original component needed.
-function Stage1Content({ s }: { s: Stage1Data }) {
+function Stage1Content({ s, isNarrow }: { s: Stage1Data; isNarrow?: boolean }) {
   const riskRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -551,16 +566,16 @@ function Stage1Content({ s }: { s: Stage1Data }) {
         border: '1px solid rgba(var(--rose-rgb), 0.3)',
         borderRadius: 4,
       }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
+        <div style={{ display: 'flex', flexWrap: isNarrow ? 'wrap' : 'nowrap', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px 18px' }}>
+          <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 10, color: 'var(--text-dim)', letterSpacing: 2 }}>MALWARE FAMILY</div>
-            <div style={{ fontSize: 28, fontFamily: "'Orbitron', monospace", color: 'var(--magenta)', marginTop: 4, lineHeight: 1.2 }}>
+            <div style={{ fontSize: 28, fontFamily: "'Orbitron', monospace", color: 'var(--magenta)', marginTop: 4, lineHeight: 1.2, wordBreak: 'break-word' }}>
               {s.malware_family}
             </div>
           </div>
-          <div style={{ textAlign: 'right' }}>
+          <div style={{ minWidth: 0, textAlign: isNarrow ? 'left' : 'right' }}>
             <div style={{ fontSize: 10, color: 'var(--text-dim)', letterSpacing: 2 }}>VERDICT</div>
-            <div style={{ fontSize: 15, color: severityColor, fontFamily: "'Orbitron', monospace", marginTop: 4 }}>
+            <div style={{ fontSize: 15, color: severityColor, fontFamily: "'Orbitron', monospace", marginTop: 4, wordBreak: 'break-word' }}>
               {s.verdict}
             </div>
           </div>
@@ -743,9 +758,9 @@ const STAGE_META: { key: 1 | 2 | 3 | 4; label: string; accent: string }[] = [
   { key: 4, label: 'Remediation Plan', accent: 'emerald' },
 ];
 
-function StageContent({ num, reportStages }: { num: number; reportStages: ReportStages }) {
+function StageContent({ num, reportStages, isNarrow }: { num: number; reportStages: ReportStages; isNarrow?: boolean }) {
   switch (num) {
-    case 1: return reportStages.stage1 ? <Stage1Content s={reportStages.stage1} /> : null;
+    case 1: return reportStages.stage1 ? <Stage1Content s={reportStages.stage1} isNarrow={isNarrow} /> : null;
     case 2: return reportStages.stage2 ? <Stage2Content s={reportStages.stage2} /> : null;
     case 3: return reportStages.stage3 ? <Stage3Content s={reportStages.stage3} /> : null;
     case 4: return reportStages.stage4 ? <Stage4Content s={reportStages.stage4} /> : null;
@@ -885,7 +900,7 @@ async function downloadPDF(filename: string, text: string) {
   doc.save(filename);
 }
 
-function ReportsTab({ reportStages }: { reportStages: ReportStages }) {
+function ReportsTab({ reportStages, isNarrow }: { reportStages: ReportStages; isNarrow?: boolean }) {
   const firstAvailable = STAGE_META.find(m => !!reportStages[`stage${m.key}` as keyof ReportStages])?.key ?? 1;
   const [selected, setSelected] = useState<number>(firstAvailable);
   const [modalStage, setModalStage] = useState<number | null>(null);
@@ -955,7 +970,7 @@ function ReportsTab({ reportStages }: { reportStages: ReportStages }) {
             <span className="blink">▸</span> Awaiting {selectedMeta.label.toLowerCase()}...
           </div>
         ) : (
-          <StageContent num={selected} reportStages={reportStages} />
+          <StageContent num={selected} reportStages={reportStages} isNarrow={isNarrow} />
         )}
       </div>
 
@@ -1011,7 +1026,7 @@ function ReportsTab({ reportStages }: { reportStages: ReportStages }) {
 
       {modalMeta && (
         <ReportModal title={modalMeta.label} accent={modalMeta.accent} onClose={() => setModalStage(null)}>
-          <StageContent num={modalStage!} reportStages={reportStages} />
+          <StageContent num={modalStage!} reportStages={reportStages} isNarrow={isNarrow} />
         </ReportModal>
       )}
     </div>
@@ -1020,7 +1035,7 @@ function ReportsTab({ reportStages }: { reportStages: ReportStages }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function BehavioralAnalysisPanel({ fileName, currentStage, stageDone, agentStatuses, agentElapsed, sandboxStep, sandboxResult, onSkipVirusTotal, reportStages, terminalLogs }: Props) {
+export default function BehavioralAnalysisPanel({ fileName, currentStage, stageDone, agentStatuses, agentElapsed, sandboxStep, sandboxResult, onSkipVirusTotal, reportStages, terminalLogs, isNarrow }: Props) {
   // Agents, Raw Logs and Reports each default to expanded, sharing one row —
   // any can be individually minimized to a thin strip. Reports just doesn't
   // render until there's data, then rises in and the page scrolls to it.
@@ -1089,11 +1104,18 @@ export default function BehavioralAnalysisPanel({ fileName, currentStage, stageD
           fades in and auto-scrolls into view. Reports' own height is pinned
           to the measured Agents+Logs height (see rowHeight above) rather
           than contributing its own — see the effect above for why. */}
-      <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', marginTop: 12 }}>
-        <div ref={agentsLogsRef} style={{ display: 'flex', gap: 14, alignItems: 'stretch', flex: '6 1 0%', minWidth: 0 }}>
-        <div style={{ flex: minimized.agents ? '0 0 34px' : '1 1 0%', minWidth: 0, display: 'flex' }}>
+      <div style={{ display: 'flex', flexDirection: isNarrow ? 'column' : 'row', gap: 14, alignItems: 'stretch', marginTop: 12 }}>
+        <div
+          ref={agentsLogsRef}
+          style={
+            isNarrow
+              ? { display: 'flex', flexDirection: 'column', gap: 14 }
+              : { display: 'flex', gap: 14, alignItems: 'stretch', flex: '6 1 0%', minWidth: 0 }
+          }
+        >
+        <div style={{ flex: minimized.agents ? (isNarrow ? '0 0 44px' : '0 0 34px') : (isNarrow ? '0 0 420px' : '1 1 0%'), minWidth: 0, display: 'flex' }}>
           <Widget
-            accent="blue" label="Agents" style={{ flex: 1 }}
+            accent="blue" label="Agents" style={{ flex: 1 }} horizontal={isNarrow}
             minimized={minimized.agents} onToggleMinimize={() => toggleMinimize('agents')}
           >
             {/* Stage pipeline bar — a real progress stepper, each phase
@@ -1128,13 +1150,14 @@ export default function BehavioralAnalysisPanel({ fileName, currentStage, stageD
               sandboxStep={sandboxStep}
               sandboxResult={sandboxResult}
               onSkipVirusTotal={onSkipVirusTotal}
+              isNarrow={isNarrow}
             />
           </Widget>
         </div>
 
-        <div style={{ flex: minimized.logs ? '0 0 34px' : '1 1 0%', minWidth: 0, display: 'flex' }}>
+        <div style={{ flex: minimized.logs ? (isNarrow ? '0 0 44px' : '0 0 34px') : (isNarrow ? '0 0 320px' : '1 1 0%'), minWidth: 0, display: 'flex' }}>
           <Widget
-            accent="amber" label="Raw Logs" live style={{ flex: 1 }}
+            accent="amber" label="Raw Logs" live style={{ flex: 1 }} horizontal={isNarrow}
             minimized={minimized.logs} onToggleMinimize={() => toggleMinimize('logs')}
           >
             <LogsTab
@@ -1155,17 +1178,21 @@ export default function BehavioralAnalysisPanel({ fileName, currentStage, stageD
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.4 }}
-              style={{
-                flex: minimized.reports ? '0 0 34px' : '3 1 0%', minWidth: 0, display: 'flex',
-                height: rowHeight ?? undefined,
-                transition: 'height 0.4s cubic-bezier(0.65,0,0.35,1)',
-              }}
+              style={
+                isNarrow
+                  ? { flex: minimized.reports ? '0 0 44px' : '0 0 420px', minWidth: 0, display: 'flex' }
+                  : {
+                    flex: minimized.reports ? '0 0 34px' : '3 1 0%', minWidth: 0, display: 'flex',
+                    height: rowHeight ?? undefined,
+                    transition: 'height 0.4s cubic-bezier(0.65,0,0.35,1)',
+                  }
+              }
             >
               <Widget
-                accent="emerald" label="Reports" badge={reportsBadge} bgAlpha={0.07} style={{ flex: 1, minHeight: 0 }}
+                accent="emerald" label="Reports" badge={reportsBadge} bgAlpha={0.07} style={{ flex: 1, minHeight: 0 }} horizontal={isNarrow}
                 minimized={minimized.reports} onToggleMinimize={() => toggleMinimize('reports')}
               >
-                <ReportsTab reportStages={reportStages} />
+                <ReportsTab reportStages={reportStages} isNarrow={isNarrow} />
               </Widget>
             </motion.div>
           )}

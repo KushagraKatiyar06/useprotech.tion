@@ -18,11 +18,21 @@ export default function Tooltip({ text, children, onlyWhenDisabled = true, disab
   const [visible, setVisible] = useState(false);
   const show = visible && (!onlyWhenDisabled || disabled);
 
+  // Touch devices have no hover — a tap on the wrapper shows the hint and
+  // auto-hides it after a beat, instead of the explanation being silently
+  // unreachable (the wrapped control itself, e.g. a disabled button, still
+  // gets the tap too; this only adds a timed reveal on top).
+  function onTouchTap() {
+    setVisible(true);
+    setTimeout(() => setVisible(false), 2200);
+  }
+
   return (
     <div
       style={{ position: 'relative', display: 'inline-flex' }}
       onMouseEnter={() => setVisible(true)}
       onMouseLeave={() => setVisible(false)}
+      onTouchStart={onTouchTap}
     >
       {children}
       {show && (

@@ -7,6 +7,7 @@ import Tooltip from './Tooltip';
 import WidgetWires from './WidgetWires';
 import { useRunActive } from '@/contexts/RunActiveContext';
 import { type StaticResult, Widget } from './BehavioralAnalysisPanel';
+import { useIsNarrow } from '@/lib/useIsNarrow';
 
 // ── Node colours matching e2b_adaptive_sandbox.py TAG_RULES ──────────────────
 const NODE_COLORS: Record<string, string> = {
@@ -207,6 +208,31 @@ function GraphView({ nodes, edges, canvasHeight, running, onNodeClick, onBackgro
 
   function onMouseUp() { dragRef.current = null; }
 
+  // Touch equivalent of the mouse pan above — drag-to-pan has no native
+  // touch fallback (unlike a tap, which browsers already synthesize into
+  // a click), so without this the graph would be mouse-only on phones.
+  // Pinch-zoom is intentionally not implemented here: the +/−/⌂ buttons
+  // already give full tap-reachable zoom control, so the one truly
+  // missing interaction is the drag itself.
+  function onTouchStart(e: React.TouchEvent) {
+    if (e.touches.length !== 1) return;
+    draggedRef.current = false;
+    const t = e.touches[0];
+    dragRef.current = { startX: t.clientX, startY: t.clientY, tx: transform.x, ty: transform.y };
+  }
+
+  function onTouchMove(e: React.TouchEvent) {
+    const drag = dragRef.current;
+    if (!drag || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - drag.startX;
+    const dy = t.clientY - drag.startY;
+    if (Math.abs(dx) > 4 || Math.abs(dy) > 4) draggedRef.current = true;
+    setTransform(tr => ({ ...tr, x: drag.tx + dx, y: drag.ty + dy }));
+  }
+
+  function onTouchEnd() { dragRef.current = null; }
+
   function onBackgroundClickInternal() {
     if (draggedRef.current) return; // was a pan, not a click
     onBackgroundClick?.();
@@ -219,11 +245,14 @@ function GraphView({ nodes, edges, canvasHeight, running, onNodeClick, onBackgro
         width="100%" height="100%"
         viewBox={`0 0 ${CANVAS_W} ${Math.max(canvasHeight, 300)}`}
         preserveAspectRatio="xMidYMin meet"
-        style={{ display: 'block', background: '#060c1a', cursor: dragRef.current ? 'grabbing' : 'grab', userSelect: 'none' }}
+        style={{ display: 'block', background: '#060c1a', cursor: dragRef.current ? 'grabbing' : 'grab', userSelect: 'none', touchAction: 'none' }}
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseUp}
+        onTouchStart={onTouchStart}
+        onTouchMove={onTouchMove}
+        onTouchEnd={onTouchEnd}
         onClick={onBackgroundClickInternal}
       >
         <defs>
@@ -648,6 +677,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
 
 export default function LinuxSandboxPanel({ staticData, jobId, autoStart, onRunningChange }: Props) {
   const { active: wiresActive } = useRunActive();
+  const isNarrow = useIsNarrow();
   const [running, setRunning]       = useState(false);
   const [done, setDone]             = useState(false);
   const [hasRunStarted, setHasRunStarted] = useState(false);
@@ -1024,15 +1054,21 @@ export default function LinuxSandboxPanel({ staticData, jobId, autoStart, onRunn
         </div>
       )}
 
-      {/* ── System info bar + controls ── */}
+      {/* ── System info bar + controls ──
+          This bar packs a lot in (status badges, VIEW/SAVE/UPLOAD PATCH,
+          legend, RUN) — on a phone-width viewport there's no room for all
+          of it on one line, so it wraps instead of overflowing off-screen
+          (the page clips horizontal overflow, which would otherwise make
+          some of these controls permanently unreachable). */}
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        flexWrap: 'wrap', gap: 8,
         marginBottom: 12, padding: '6px 10px',
         background: 'rgba(0,0,0,0.35)',
         border: '1px solid rgba(var(--violet-rgb),0.08)',
         borderRadius: 6,
       }}>
-        <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 10, color: '#90EE90' }}>
             ubuntu@e2b-sandbox:~$
           </span>
@@ -1060,7 +1096,7 @@ export default function LinuxSandboxPanel({ staticData, jobId, autoStart, onRunn
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {done && (
             <span style={{ fontSize: 9, color: '#10b981', fontFamily: 'JetBrains Mono, monospace', letterSpacing: 1 }}>
               ● COMPLETE
@@ -1370,11 +1406,14 @@ export default function LinuxSandboxPanel({ staticData, jobId, autoStart, onRunn
           the Agents/Raw Logs/Reports widgets above (reusing the real Widget
           component), each piece free to shrink to a thin strip so the
           others can grow into the freed space. ── */}
-      <div style={{ display: 'flex', gap: 12, alignItems: 'stretch', height: 340 }}>
+      <div style={isNarrow
+        ? { display: 'flex', flexDirection: 'column', gap: 12 }
+        : { display: 'flex', gap: 12, alignItems: 'stretch', height: 340 }
+      }>
 
         {/* Terminal console */}
-        <div style={{ flex: panelMin.console ? '0 0 34px' : '1 1 0%', minWidth: 0, display: 'flex' }}>
-          <Widget accent="violet" label="Console" live={running} style={{ flex: 1 }}
+        <div style={{ flex: panelMin.console ? (isNarrow ? '0 0 44px' : '0 0 34px') : (isNarrow ? '0 0 300px' : '1 1 0%'), minWidth: 0, display: 'flex' }}>
+          <Widget accent="violet" label="Console" live={running} style={{ flex: 1 }} horizontal={isNarrow}
             minimized={panelMin.console} onToggleMinimize={() => toggleMin('console')}>
             <div
               ref={logRef}
@@ -1399,8 +1438,8 @@ export default function LinuxSandboxPanel({ staticData, jobId, autoStart, onRunn
         {/* Interactive behavior tree — click empty canvas to pop it into a
             free-look overlay (see GraphExpandedOverlay); click a node for
             its detail popup instead, same as before. */}
-        <div style={{ flex: panelMin.graph ? '0 0 34px' : '1.3 1 0%', minWidth: 0, display: 'flex' }}>
-          <Widget accent="violet" label="Behavior Tree" style={{ flex: 1 }}
+        <div style={{ flex: panelMin.graph ? (isNarrow ? '0 0 44px' : '0 0 34px') : (isNarrow ? '0 0 360px' : '1.3 1 0%'), minWidth: 0, display: 'flex' }}>
+          <Widget accent="violet" label="Behavior Tree" style={{ flex: 1 }} horizontal={isNarrow}
             minimized={panelMin.graph} onToggleMinimize={() => toggleMin('graph')}>
             <div style={{ position: 'relative', height: '100%', background: '#060c1a', borderRadius: 4, overflow: 'hidden' }}>
               <GraphView
@@ -1417,11 +1456,12 @@ export default function LinuxSandboxPanel({ staticData, jobId, autoStart, onRunn
             typing animation on top of data that actually arrives in whole
             chunks per iteration. */}
         {adaptiveMode && (
-          <div style={{ flex: panelMin.code ? '0 0 34px' : '1.6 1 0%', minWidth: 0, display: 'flex' }}>
+          <div style={{ flex: panelMin.code ? (isNarrow ? '0 0 44px' : '0 0 34px') : (isNarrow ? '0 0 300px' : '1.6 1 0%'), minWidth: 0, display: 'flex' }}>
             <Widget
               accent="emerald" label="mock.js — live"
               badge={liveCode ? `iter ${liveCode.iteration}` : undefined}
               style={{ flex: 1, borderColor: liveCodeFlash ? 'var(--emerald)' : undefined, transition: 'border-color 0.3s ease' }}
+              horizontal={isNarrow}
               minimized={panelMin.code} onToggleMinimize={() => toggleMin('code')}
             >
               <div ref={liveCodeRef} style={{ height: '100%', overflowY: 'auto', fontFamily: 'JetBrains Mono, monospace', fontSize: 9, lineHeight: 1.6 }}>

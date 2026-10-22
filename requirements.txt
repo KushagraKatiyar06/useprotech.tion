@@ -18,6 +18,9 @@ matplotlib
 scipy
 cryptography
 requests
+pefile
+yara-python
+dnfile
 
 # Sandbox execution
 e2b

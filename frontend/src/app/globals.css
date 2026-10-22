@@ -15,6 +15,8 @@
   --emerald: #10b981;
   --amber:   #f59e0b;
   --rose:    #f43f5e;
+  --teal:    #14b8a6;
+  --pink:    #ec4899;
 
   /* Glows */
   --blue-glow:    0 0 16px rgba(59, 130, 246, 0.4);
@@ -22,11 +24,27 @@
   --cyan-glow:    0 0 16px rgba(6, 182, 212, 0.35);
   --rose-glow:    0 0 16px rgba(244, 63, 94, 0.4);
   --emerald-glow: 0 0 16px rgba(16, 185, 129, 0.35);
+  --amber-glow:   0 0 16px rgba(245, 158, 11, 0.35);
 
   /* Text */
   --text:     #e2e8f0;
   --text-mid: #94a3b8;
   --text-dim: #475569;
+
+  /* Aliases — used throughout the dashboard panels, map to the palette above
+     so there's one source of truth instead of a second set of neon hex values */
+  --magenta:   var(--rose);
+  --text-cyan: var(--cyan);
+
+  /* RGB components, for rgba() usage at custom alphas */
+  --rose-rgb:    244, 63, 94;
+  --cyan-rgb:    6, 182, 212;
+  --amber-rgb:   245, 158, 11;
+  --emerald-rgb: 16, 185, 129;
+  --blue-rgb:    59, 130, 246;
+  --violet-rgb:  139, 92, 246;
+  --teal-rgb:    20, 184, 166;
+  --pink-rgb:    236, 72, 153;
 }
 
 * {
@@ -44,6 +62,35 @@ body {
   overflow-x: hidden;
 }
 
+/* #page-content wraps only the routed page — not GlobalBackdrop, which is
+   a sibling. Fading this (instead of body) on navigation keeps the
+   FloatingLines/circuit-wires backdrop visually continuous and flowing
+   underneath the whole transition instead of blinking out with the page. */
+#page-content {
+  position: relative;
+  z-index: 1;
+  transition: opacity 0.26s ease;
+}
+
+/* Toggled right before navigating (Header's Home link, the landing page's
+   Start link), so leaving the page fades its content out instead of
+   snapping straight to the next route. */
+#page-content.page-leaving {
+  opacity: 0;
+}
+
+/* Per-widget WidgetWires fade in individually once a run starts — see
+   .widget-wires above and Widget's `active` prop in BehavioralAnalysisPanel. */
+.widget-wires-wrap {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1s ease;
+}
+.widget-wires-wrap.active {
+  opacity: 1;
+}
+
 /* Subtle dot-grid background */
 body::before {
   content: '';
@@ -53,6 +100,38 @@ body::before {
   background-size: 28px 28px;
   pointer-events: none;
   z-index: 0;
+}
+
+/* Per-widget flowing wires (WidgetWires) — a contained version of the same
+   effect, living inside an individual Agents/Raw Logs/Reports widget rather
+   than behind the whole page. The widget rendering it must be
+   `position: relative; overflow: hidden` so this clips to its rounded
+   corners instead of bleeding out. */
+.widget-wires {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+.widget-wire {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 16;
+  opacity: 0.22;
+  vector-effect: non-scaling-stroke;
+  animation: wireFlow 14s linear infinite;
+}
+.widget-wire:nth-child(2) { animation-duration: 18s; animation-direction: reverse; }
+.widget-wire:nth-child(3) { animation-duration: 22s; }
+
+@keyframes wireFlow {
+  to { stroke-dashoffset: -420; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .widget-wire { animation: none; }
 }
 
 /* ── HEADER ── */
@@ -81,6 +160,27 @@ body::before {
 .hud-logo span {
   color: var(--blue);
   text-shadow: var(--blue-glow);
+}
+
+/* Fades in once a run has actually finished (Header's showStartOver prop) —
+   invisible and non-interactive the rest of the time, not removed from the
+   DOM, so the opacity transition has something to animate. */
+.start-over-btn {
+  font-family: 'Orbitron', monospace;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  padding: 7px 14px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: var(--emerald);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.6s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.start-over-btn:hover {
+  background: rgba(16, 185, 129, 0.16);
+  box-shadow: var(--emerald-glow);
 }
 
 .hud-status-row {
@@ -117,14 +217,37 @@ body::before {
   color: var(--text-dim);
 }
 
+/* ── PRE-RUN (no file uploaded yet) ── */
+.pre-run-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 10vh 24px;
+  min-height: calc(100vh - 65px);
+  position: relative;
+  z-index: 1;
+}
+
+.pre-run-wrap > * {
+  width: 100%;
+  max-width: 480px;
+}
+
 /* ── MAIN GRID ── */
 .main-grid {
   display: grid;
-  grid-template-columns: 300px 1fr 280px;
+  /* 340px (File Intake) | 1fr (Behavioral Analysis) — the third (Threat
+     Report) column is gone now that it's merged into the Reports accordion
+     inside the one remaining panel. The File-Intake-collapses-into-
+     Behavioral-Analysis animation is handled by Framer Motion in
+     dashboard/page.tsx (AnimatePresence + layout), not a CSS transition on
+     this grid — grid-template-columns transitions don't interpolate
+     smoothly enough across browsers for this to read as a real morph. */
+  grid-template-columns: 340px 1fr;
   grid-template-rows: auto auto;
-  gap: 16px;
-  padding: 24px;
-  max-width: 1440px;
+  gap: 20px;
+  padding: 24px 32px;
+  max-width: 1800px;
   margin: 0 auto;
   position: relative;
   z-index: 1;
@@ -153,10 +276,11 @@ body::before {
 .panel-corner { display: none; }
 
 .panel-title {
-  font-family: 'Orbitron', monospace;
-  font-size: 9px;
-  letter-spacing: 3px;
-  color: var(--text-mid);
+  font-family: 'Inter', sans-serif;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.3px;
+  color: var(--text);
   text-transform: uppercase;
   margin-bottom: 16px;
 }
@@ -234,40 +358,111 @@ body::before {
   text-transform: uppercase;
 }
 
+/* Primary action — a clear green "play" button. Colors are driven by
+   `color`/`border-color` (not a hardcoded background fill) specifically so
+   FileIntakePanel's inline VT-log-mode override (purple) still reskins it
+   correctly without any background-color clash. */
+/* Baseline press/hover feedback for every real <button> on the site — a
+   snappy, near-instant :active transform so a click reads as registered
+   immediately, instead of waiting for whatever async result eventually
+   changes the button's text/state. Components with their own more specific
+   hover/active rules (like .hud-btn below) override this; this is the floor
+   for the many inline-styled buttons scattered through the dashboard that
+   otherwise had zero click feedback at all. */
+button {
+  transition: transform 0.08s ease, filter 0.08s ease, opacity 0.15s ease;
+}
+button:active:not(:disabled) {
+  transform: scale(0.96);
+  filter: brightness(1.2);
+}
+button:disabled {
+  cursor: not-allowed;
+}
+
+/* Same press feedback for non-<button> clickables (div/span onClick
+   "pills", toggles, tabs) — CSS :active isn't restricted to semantic
+   buttons, so this just needs a shared class to opt into.
+   The transition list here is deliberately a broad superset (not just
+   transform/filter): .clickable sits on elements that already declare
+   their own hover transition (e.g. .upload-zone's color/background fade),
+   and two same-specificity class selectors don't merge their `transition`
+   values — whichever is later in the file wins outright. Covering the
+   common hover-able properties here too means winning that tie never
+   silently kills another component's existing smooth hover. */
+.clickable {
+  transition: transform 0.08s ease, filter 0.08s ease,
+    background-color 0.2s ease, border-color 0.2s ease,
+    color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease;
+}
+.clickable:active {
+  transform: scale(0.96);
+  filter: brightness(1.2);
+}
+
 .hud-btn {
   display: block;
   width: 100%;
-  padding: 11px 16px;
-  background: transparent;
-  border: 1px solid rgba(59, 130, 246, 0.4);
-  color: var(--blue);
+  padding: 15px 16px;
+  background: rgba(16, 185, 129, 0.05);
+  border: 1.5px solid var(--emerald);
+  color: var(--emerald);
   font-family: 'Orbitron', monospace;
-  font-size: 10px;
-  letter-spacing: 2px;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 3px;
   cursor: pointer;
   text-transform: uppercase;
-  transition: all 0.2s;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, transform 0.08s ease;
   border-radius: 8px;
   margin-top: 10px;
 }
 
 .hud-btn:hover {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: var(--blue);
-  box-shadow: var(--blue-glow);
+  background: rgba(16, 185, 129, 0.14);
+  box-shadow: var(--emerald-glow);
+  transform: translateY(-1px);
 }
 
-.hud-btn:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; }
+.hud-btn:active:not(:disabled) {
+  background: rgba(16, 185, 129, 0.24);
+  box-shadow: var(--emerald-glow);
+  transform: translateY(0) scale(0.98);
+  transition-duration: 0.05s;
+}
 
+.hud-btn:disabled { opacity: 0.3; cursor: not-allowed; box-shadow: none; transform: none; }
+
+/* Secondary/utility action — a flat link-style trigger, deliberately unlike
+   the boxed primary button above so the two never read as "two buttons that
+   do similar things." */
 .hud-btn.cyan-btn {
-  border-color: rgba(6, 182, 212, 0.4);
+  width: auto;
+  display: inline-block;
+  padding: 6px 2px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px dashed rgba(6, 182, 212, 0.35);
+  border-radius: 0;
   color: var(--cyan);
+  font-weight: 400;
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  margin-top: 10px;
 }
 
 .hud-btn.cyan-btn:hover {
-  background: rgba(6, 182, 212, 0.1);
-  border-color: var(--cyan);
-  box-shadow: var(--cyan-glow);
+  background: transparent;
+  border-bottom-color: var(--cyan);
+  box-shadow: none;
+  transform: none;
+  color: var(--text);
+}
+
+.hud-btn.cyan-btn:active {
+  color: var(--cyan);
+  transform: scale(0.97);
+  transition-duration: 0.05s;
 }
 
 .stat-row { display: flex; gap: 10px; margin: 10px 0; }
@@ -300,39 +495,6 @@ body::before {
 /* ── CENTER PANEL ── */
 .center-panel { grid-column: 2; }
 
-.tab-row {
-  display: flex;
-  gap: 6px;
-  margin-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 12px;
-}
-
-.tab {
-  padding: 7px 16px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  letter-spacing: 1px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--text-dim);
-  background: transparent;
-  transition: all 0.2s;
-  text-transform: uppercase;
-}
-
-.tab.active {
-  border-color: rgba(59, 130, 246, 0.4);
-  color: var(--blue);
-  background: rgba(59, 130, 246, 0.08);
-}
-
-.tab:hover:not(.active) {
-  border-color: var(--border-glow);
-  color: var(--text-mid);
-}
-
 /* Process tree */
 .proc-list { font-size: 12px; line-height: 1.9; }
 
@@ -358,13 +520,14 @@ body::before {
 .proc-pid  { color: var(--text-dim); font-size: 11px; font-family: 'JetBrains Mono', monospace; }
 .proc-mem  { color: var(--text-dim); font-size: 11px; font-family: 'JetBrains Mono', monospace; }
 
-/* Log terminal */
+/* Log terminal — height comes from the flex column it's stretched into
+   (BehavioralAnalysisPanel's Agents/Logs row), not a fixed value here. */
 .log-terminal {
   background: #04080f;
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px;
-  height: 280px;
+  min-height: 240px;
   overflow-y: auto;
   font-size: 12px;
   line-height: 1.8;
@@ -423,9 +586,9 @@ body::before {
 .arch-lbl  { font-size: 9px; letter-spacing: 1px; color: var(--text-mid); text-transform: uppercase; }
 .arch-arrow { text-align: center; color: var(--text-dim); font-size: 18px; }
 
-/* ── RIGHT PANEL — AI Report ── */
-.ai-panel { grid-column: 3; }
-
+/* .risk-gauge/.risk-fill below are now used by Stage1Content inside
+   BehavioralAnalysisPanel.tsx's Reports accordion (the old standalone
+   ThreatReportPanel/.ai-panel column was merged into it, removed here). */
 .risk-gauge {
   width: 100%;
   height: 6px;
@@ -640,45 +803,87 @@ body::before {
   text-transform: uppercase;
 }
 
-/* ── STAGE INDICATORS ── */
+/* ── STAGE INDICATORS ──
+   A connected progress stepper — dots joined by a line, filled in as they
+   complete. Deliberately unlike .tab-row above: no boxes, a different
+   accent (blue/emerald here vs. cyan for tabs), so the two rows read as
+   different control types at a glance, not siblings. */
 .stages {
   display: flex;
-  gap: 4px;
-  margin: 14px 0;
+  margin: 16px 0 18px;
 }
 
 .stage {
+  position: relative;
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
   text-align: center;
-  padding: 8px 4px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
   color: var(--text-dim);
   font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
+  font-size: 8px;
   letter-spacing: 1px;
   text-transform: uppercase;
-  transition: all 0.3s;
+}
+
+.stage::before {
+  content: '';
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  border: 2px solid var(--text-dim);
+  transition: all 0.3s ease;
+  position: relative;
+  z-index: 2;
+}
+
+.stage:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: calc(50% + 10px);
+  width: calc(100% - 10px);
+  height: 1px;
+  background: var(--border);
+  z-index: 1;
+  transition: background 0.3s ease;
+}
+
+.stage.done::before {
+  border-color: var(--emerald);
+  background: var(--emerald);
+}
+
+.stage.done:not(:last-child)::after {
+  background: var(--emerald);
 }
 
 .stage.done {
-  border-color: rgba(16, 185, 129, 0.4);
   color: var(--emerald);
-  background: rgba(16, 185, 129, 0.06);
 }
 
-.stage.active {
-  border-color: rgba(59, 130, 246, 0.5);
-  color: var(--blue);
-  background: rgba(59, 130, 246, 0.08);
+.stage.active::before {
+  border-color: var(--blue);
+  background: var(--blue);
   box-shadow: var(--blue-glow);
 }
 
-.stage.warn {
-  border-color: rgba(244, 63, 94, 0.5);
-  color: var(--rose);
-  background: rgba(244, 63, 94, 0.07);
+.stage.active {
+  color: var(--blue);
+}
+
+.stage.warn::before {
+  border-color: var(--rose);
+  background: var(--rose);
+  box-shadow: var(--rose-glow);
   animation: pulse-border 1.2s infinite;
+}
+
+.stage.warn {
+  color: var(--rose);
 }
 
 /* ── UTILITIES ── */
@@ -711,6 +916,100 @@ body::before {
 
 .blink { animation: blink 1s step-end infinite; }
 
+/* ── HOME OVERVIEW ── */
+.overview-section {
+  position: relative;
+  z-index: 200;
+  padding: 40px 24px 120px;
+}
+
+.overview-wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.overview-heading {
+  font-family: 'Orbitron', monospace;
+  font-weight: 700;
+  font-size: clamp(22px, 3.5vw, 34px);
+  color: var(--text);
+  line-height: 1.35;
+  margin-bottom: 16px;
+}
+
+.overview-sub {
+  font-size: 15px;
+  color: var(--text-mid);
+  line-height: 1.7;
+  max-width: 620px;
+  margin: 0 auto 56px;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 20px;
+  text-align: left;
+}
+
+.overview-card {
+  border: 1px solid var(--border);
+  background: var(--bg-panel);
+  border-radius: 12px;
+  padding: 26px 22px;
+  position: relative;
+  overflow: hidden;
+  transition: all 0.25s;
+}
+
+.overview-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 18px; right: 18px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent, var(--blue)), transparent);
+  opacity: 0.6;
+}
+
+.overview-card:hover {
+  border-color: var(--accent-border, rgba(59, 130, 246, 0.35));
+  box-shadow: var(--accent-glow, var(--blue-glow));
+  transform: translateY(-3px);
+}
+
+.overview-step {
+  font-family: 'Orbitron', monospace;
+  font-size: 22px;
+  font-weight: 900;
+  color: var(--accent, var(--blue));
+  text-shadow: var(--accent-glow, var(--blue-glow));
+  margin-bottom: 16px;
+}
+
+.overview-card-title {
+  font-family: 'Orbitron', monospace;
+  font-size: 12px;
+  letter-spacing: 1.5px;
+  color: var(--text);
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.overview-card-desc {
+  font-size: 13px;
+  color: var(--text-mid);
+  line-height: 1.65;
+}
+
+@media (max-width: 900px) {
+  .overview-grid { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 560px) {
+  .overview-grid { grid-template-columns: 1fr; }
+}
+
 /* ── SCROLLBAR ── */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -721,3 +1020,35 @@ body::before {
 @keyframes pulse-border { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
 @keyframes blink        { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 @keyframes flicker      { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* Sandbox behavior tree — nodes fade in once on mount (opacity only, never
+   transform: an SVG <g> here already carries a translate() attribute, and a
+   CSS transform would silently replace it instead of composing with it). */
+@keyframes sandboxNodeIn { from { opacity: 0; } to { opacity: 1; } }
+.sandbox-node-in { animation: sandboxNodeIn 0.35s ease-out; }
+
+/* "Gemini is patching" banner + its sparkle icon */
+@keyframes sparklePulse {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  50%      { transform: scale(1.3) rotate(14deg); opacity: 0.7; }
+}
+.gemini-patch-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(var(--violet-rgb), 0.4);
+  border-radius: 6px;
+  background: rgba(var(--violet-rgb), 0.08);
+  color: var(--violet);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  animation: pulse-border 1.4s ease-in-out infinite;
+}
+.gemini-patch-banner .spark {
+  display: inline-block;
+  animation: sparklePulse 0.9s ease-in-out infinite;
+}

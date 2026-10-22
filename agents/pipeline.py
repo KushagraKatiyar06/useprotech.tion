@@ -1,57 +1,76 @@
 import concurrent.futures
 import json
 import os
-import anthropic
+from google import genai
+from google.genai import types as genai_types
 from dotenv import load_dotenv
 
 load_dotenv()
 
-client = anthropic.Anthropic()
-MODEL = "claude-haiku-4-5"
+# Lazy-init so a missing key doesn't crash the app on import
+_client: genai.Client | None = None
 
-CALL_TIMEOUT = 45  # seconds — hard limit per Claude call
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    return _client
 
-def call_claude(system_prompt: str, user_message: str, timeout: int = 45, max_tokens: int = 2000) -> dict:
+MODEL = "gemini-2.5-flash"
+
+CALL_TIMEOUT = 45  # seconds — hard limit per Gemini call
+
+def call_llm(system_prompt: str, user_message: str, timeout: int = 45, max_tokens: int = 2000) -> dict:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
-            lambda: client.messages.create(
+            lambda: _get_client().models.generate_content(
                 model=MODEL,
-                max_tokens=max_tokens,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_message}]
+                contents=user_message,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    max_output_tokens=max_tokens,
+                    response_mime_type="application/json",
+                    # gemini-2.5-flash "thinks" by default, spending part of
+                    # max_output_tokens on hidden reasoning before the actual
+                    # answer — that was silently truncating these structured
+                    # JSON responses well short of the real limit. These are
+                    # straightforward extraction/formatting tasks, not
+                    # multi-step reasoning, so thinking is pure overhead here.
+                    thinking_config=genai_types.ThinkingConfig(thinking_budget=0),
+                ),
             )
         )
         try:
             response = future.result(timeout=timeout)
-            text = response.content[0].text.strip()
+            text = (response.text or "").strip()
             if text.startswith("```"):
                 text = text.split("```")[1]
                 if text.startswith("json"):
                     text = text[4:]
             return json.loads(text.strip())
         except concurrent.futures.TimeoutError:
-            print(f"WARNING: Claude call timed out after {timeout}s")
+            print(f"WARNING: Gemini call timed out after {timeout}s")
             return {"error": "timeout", "partial": True}
         except Exception as e:
-            print(f"WARNING: Claude call failed: {e}")
+            print(f"WARNING: Gemini call failed: {e}")
             return {}
 
 
-def _call_claude_timed(system_prompt: str, user_message: str,
-                       timeout: int = CALL_TIMEOUT, max_tokens: int = 2000) -> dict:
-    """call_claude() with a hard timeout.
+def _call_llm_timed(system_prompt: str, user_message: str,
+                     timeout: int = CALL_TIMEOUT, max_tokens: int = 2000) -> dict:
+    """call_llm() with a hard timeout.
     Returns {'error': 'timeout', 'partial': True} if the call exceeds `timeout` seconds
     so the pipeline can continue with partial data rather than hanging indefinitely.
     """
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-        fut = ex.submit(call_claude, system_prompt, user_message, max_tokens)
+        fut = ex.submit(call_llm, system_prompt, user_message, max_tokens)
         try:
             return fut.result(timeout=timeout)
         except concurrent.futures.TimeoutError:
-            print(f"WARNING: Claude call timed out after {timeout}s — returning partial stub")
+            print(f"WARNING: Gemini call timed out after {timeout}s — returning partial stub")
             return {"error": "timeout", "partial": True}
         except Exception as exc:
-            print(f"WARNING: Claude call failed: {exc}")
+            print(f"WARNING: Gemini call failed: {exc}")
             return {"error": str(exc), "partial": True}
 
 def enrich_with_virustotal(vt_json_path: str) -> dict:
@@ -99,7 +118,7 @@ def enrich_with_virustotal(vt_json_path: str) -> dict:
 
 def run_ingestion(file_metadata: dict) -> dict:
     print("Running Ingestion Agent...")
-    return call_claude(
+    return call_llm(
         system_prompt="""You are a malware triage specialist.
         Given raw file metadata, structure it cleanly and flag anything suspicious.
         Output valid JSON only, no markdown, no explanation.
@@ -117,7 +136,7 @@ def run_ingestion(file_metadata: dict) -> dict:
 
 def run_static_analysis(ingestion_output: dict) -> dict:
     print("Running Static Analysis Agent...")
-    return call_claude(
+    return call_llm(
         system_prompt="""You are a malware analyst specializing in static analysis.
         Classify the malware type, explain behavior, identify obfuscation, assess severity.
         Output valid JSON only, no markdown, no explanation.
@@ -135,7 +154,7 @@ def run_static_analysis(ingestion_output: dict) -> dict:
 
 def run_mitre_mapping(ingestion_output: dict) -> dict:
     print("Running MITRE Mapping Agent...")
-    return call_claude(
+    return call_llm(
         system_prompt="""You are a MITRE ATT&CK framework specialist.
         Map behaviors to the most specific ATT&CK technique IDs possible.
         Output valid JSON only, no markdown, no explanation.
@@ -151,12 +170,13 @@ def run_mitre_mapping(ingestion_output: dict) -> dict:
             ],
             "confidence": 0.9
         }""",
-        user_message=f"Map these malware behaviors to MITRE ATT&CK: {json.dumps(ingestion_output)}"
+        user_message=f"Map these malware behaviors to MITRE ATT&CK: {json.dumps(ingestion_output)}",
+        max_tokens=3000,
     )
 
 def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -> dict:
     print(f"🛡️ Running Remediation Agent (attempt {attempt})...")
-    result = call_claude(
+    result = call_llm(
         system_prompt="""You are a cybersecurity incident responder.
         Given malware analysis and MITRE techniques, provide:
         1. A YARA detection rule
@@ -173,7 +193,8 @@ def run_remediation(static_output: dict, mitre_output: dict, attempt: int = 1) -
             "confidence": 0.9,
             "needs_rerun": false
         }""",
-        user_message=f"Generate remediation. Static: {json.dumps(static_output)}. MITRE: {json.dumps(mitre_output)}"
+        user_message=f"Generate remediation. Static: {json.dumps(static_output)}. MITRE: {json.dumps(mitre_output)}",
+        max_tokens=3000,
     )
     if result.get("needs_rerun") and attempt < 2:
         print("⚠️ Confidence low, rerunning...")
@@ -190,7 +211,7 @@ def run_report_threat_id(ingestion: dict, static: dict, vt_data: dict | None = N
         "suspicious_flags": ingestion.get("suspicious_flags", [])[:5],
         "verdict_labels":   (vt_data or {}).get("verdict_labels", []),
     }
-    return _call_claude_timed(
+    return _call_llm_timed(
         system_prompt="""You are a malware classification expert.
 Given concise file metadata, identify the malware family, assign a risk score 0-100, and write one sentence.
 Output valid JSON only. No markdown, no explanation.
@@ -222,7 +243,7 @@ def run_report_executive(stage1: dict, static: dict, vt_data: dict | None = None
         "verdict_labels":   (vt_data or {}).get("verdict_labels", []),
         "dns_hostnames":    (vt_data or {}).get("dns_hostnames", []),
     }
-    return _call_claude_timed(
+    return _call_llm_timed(
         system_prompt="""You are a cybersecurity communications specialist writing for executives.
 Given malware analysis, write a clear non-technical executive brief.
 Output valid JSON only. No markdown, no explanation.
@@ -256,7 +277,7 @@ def run_report_technical(static: dict, mitre: dict, vt_data: dict | None = None)
         "registry_keys":    vt.get("registry_keys_set", [])[:5],
         "processes":        vt.get("processes_created", [])[:1],
     }
-    return _call_claude_timed(
+    return _call_llm_timed(
         system_prompt="""You are a malware reverse engineer writing a technical threat report.
 Synthesize all indicators into structured technical analysis.
 Output valid JSON only. No markdown, no explanation.
@@ -290,7 +311,7 @@ def run_report_remediation(remediation: dict, mitre: dict) -> dict:
         "yara_rule":         remediation.get("yara_rule", ""),
         "mitre_ids":         [t.get("id") for t in mitre.get("techniques", [])[:8]],
     }
-    return _call_claude_timed(
+    return _call_llm_timed(
         system_prompt="""You are a senior incident responder writing a prioritized action plan.
 Produce a final actionable remediation report with a valid YARA rule.
 Output valid JSON only. No markdown, no explanation.
@@ -310,7 +331,7 @@ Format:
 }""",
         user_message=f"Generate remediation plan: {json.dumps(ctx)}",
         timeout=60,
-        max_tokens=3000,
+        max_tokens=4000,
     )
 
 def run_pipeline(file_metadata: dict, progress_cb=None, vt_data: dict | None = None):

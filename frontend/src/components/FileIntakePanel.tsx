@@ -30,11 +30,11 @@ const MODE_STYLE = {
     letterSpacing: 1,
     textAlign: 'center' as const,
     cursor: 'pointer',
-    border: `1px solid ${active ? accent : 'rgba(0,245,255,0.1)'}`,
+    border: `1px solid ${active ? accent : 'rgba(var(--cyan-rgb), 0.1)'}`,
     background: active ? `${accent}18` : 'transparent',
     color: active ? accent : '#475569',
     borderRadius: 3,
-    transition: 'all 0.2s',
+    transition: 'background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease',
   }),
 };
 
@@ -109,14 +109,14 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
   const isMalware = mode === 'malware';
 
   return (
-    <Panel title="// FILE INTAKE" style={{ gridColumn: 1, gridRow: 1 }}>
+    <Panel title="FILE INTAKE">
 
       {/* ── Mode selector ── */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-        <div style={MODE_STYLE.tab(isMalware, '#ff2d9e')} onClick={() => switchMode('malware')}>
+        <div className="clickable" style={MODE_STYLE.tab(isMalware, 'var(--magenta)')} onClick={() => switchMode('malware')}>
           MALWARE FILE
         </div>
-        <div style={MODE_STYLE.tab(!isMalware, '#a78bfa')} onClick={() => switchMode('vt_log')}>
+        <div className="clickable" style={MODE_STYLE.tab(!isMalware, '#a78bfa')} onClick={() => switchMode('vt_log')}>
           VT LOG
         </div>
       </div>
@@ -125,7 +125,7 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
       {isMalware ? (
         <>
           <div
-            className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
+            className={`upload-zone clickable ${dragOver ? 'drag-over' : ''}`}
             onClick={() => malwareInputRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
@@ -133,12 +133,12 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
           >
             <div className="upload-icon">
               <svg viewBox="0 0 40 40" fill="none">
-                <rect x="4" y="8" width="24" height="28" rx="2" stroke="#00f5ff" strokeWidth="1" fill="none" opacity="0.4" />
-                <rect x="8" y="4" width="24" height="28" rx="2" stroke="#00f5ff" strokeWidth="1.5" fill="rgba(0,245,255,0.06)" />
-                <path d="M16 16 L20 12 L24 16" stroke="#ff2d9e" strokeWidth="1.5" strokeLinecap="round" fill="none" />
-                <line x1="20" y1="12" x2="20" y2="22" stroke="#ff2d9e" strokeWidth="1.5" strokeLinecap="round" />
-                <line x1="14" y1="24" x2="26" y2="24" stroke="#00f5ff" strokeWidth="1" opacity="0.5" />
-                <line x1="14" y1="27" x2="26" y2="27" stroke="#00f5ff" strokeWidth="1" opacity="0.3" />
+                <rect x="4" y="8" width="24" height="28" rx="2" stroke="var(--text-cyan)" strokeWidth="1" fill="none" opacity="0.4" />
+                <rect x="8" y="4" width="24" height="28" rx="2" stroke="var(--text-cyan)" strokeWidth="1.5" fill="rgba(var(--cyan-rgb), 0.06)" />
+                <path d="M16 16 L20 12 L24 16" stroke="var(--magenta)" strokeWidth="1.5" strokeLinecap="round" fill="none" />
+                <line x1="20" y1="12" x2="20" y2="22" stroke="var(--magenta)" strokeWidth="1.5" strokeLinecap="round" />
+                <line x1="14" y1="24" x2="26" y2="24" stroke="var(--text-cyan)" strokeWidth="1" opacity="0.5" />
+                <line x1="14" y1="27" x2="26" y2="27" stroke="var(--text-cyan)" strokeWidth="1" opacity="0.3" />
               </svg>
             </div>
             <div className="upload-text">DROP MALWARE OR CLICK TO UPLOAD</div>
@@ -149,7 +149,7 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
       ) : (
         <>
           <div
-            className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
+            className={`upload-zone clickable ${dragOver ? 'drag-over' : ''}`}
             style={{ borderColor: 'rgba(167,139,250,0.35)' }}
             onClick={() => vtInputRef.current?.click()}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -199,22 +199,31 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
         </>
       )}
 
-      <Tooltip
-        text={!fileInfo ? 'Drop or select a file above first' : 'Analysis already running…'}
-        disabled={!fileInfo || analysisRunning}
-      >
-        <button
-          className="hud-btn"
-          onClick={onAnalyze}
+      {/* Grid, not just a block div — a plain block parent does NOT stretch
+          an inline-level child to fill its width, and Tooltip's own wrapper
+          div is `inline-flex` with no explicit width, so it still shrinks to
+          the button's content inside a block wrapper. A single-column grid
+          item stretches to fill by default, which is what actually fixes it
+          (confirmed — this is the same trick used for the two buttons that
+          used to sit below this one). */}
+      <div style={{ display: 'grid', width: '100%' }}>
+        <Tooltip
+          text={!fileInfo ? 'Drop or select a file above first' : 'Analysis already running…'}
           disabled={!fileInfo || analysisRunning}
-          style={{
-            width: '100%',
-            ...(fileInfo?.mode === 'vt_log' ? { borderColor: 'rgba(167,139,250,0.5)', color: '#a78bfa' } : {}),
-          }}
         >
-          {fileInfo?.mode === 'vt_log' ? '▶ ANALYSE VT LOG' : '▶ INITIATE ANALYSIS'}
-        </button>
-      </Tooltip>
+          <button
+            className="hud-btn"
+            onClick={onAnalyze}
+            disabled={!fileInfo || analysisRunning}
+            style={{
+              width: '100%',
+              ...(fileInfo?.mode === 'vt_log' ? { borderColor: 'rgba(167,139,250,0.5)', color: '#a78bfa' } : {}),
+            }}
+          >
+            {fileInfo?.mode === 'vt_log' ? '▶ ANALYSE VT LOG' : '▶ START ANALYSIS'}
+          </button>
+        </Tooltip>
+      </div>
 
       {/* ── Pre-saved VT logs (vt_log mode only) ── */}
       {!isMalware && results.length > 0 && (
@@ -277,7 +286,7 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
           {samplesOpen && (
             <div style={{
               marginTop: 6,
-              border: '1px solid rgba(0,245,255,0.15)',
+              border: '1px solid rgba(var(--cyan-rgb), 0.15)',
               borderRadius: 4,
               overflow: 'hidden',
             }}>
@@ -290,19 +299,19 @@ export default function FileIntakePanel({ onFileLoaded, onAnalyze, analysisRunni
                     width: '100%',
                     textAlign: 'left',
                     padding: '6px 10px',
-                    background: 'rgba(0,245,255,0.03)',
+                    background: 'rgba(var(--cyan-rgb), 0.03)',
                     border: 'none',
-                    borderBottom: '1px solid rgba(0,245,255,0.08)',
+                    borderBottom: '1px solid rgba(var(--cyan-rgb), 0.08)',
                     color: '#94a3b8',
                     fontFamily: 'JetBrains Mono, monospace',
                     fontSize: 10,
                     cursor: 'pointer',
                     transition: 'background 0.15s',
                   }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(0,245,255,0.09)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(0,245,255,0.03)')}
+                  onMouseEnter={e => (e.currentTarget.style.background = 'rgba(var(--cyan-rgb), 0.09)')}
+                  onMouseLeave={e => (e.currentTarget.style.background = 'rgba(var(--cyan-rgb), 0.03)')}
                 >
-                  <span style={{ color: '#ff2d9e', marginRight: 6 }}>›</span>
+                  <span style={{ color: 'var(--magenta)', marginRight: 6 }}>›</span>
                   {name}
                 </button>
               ))}

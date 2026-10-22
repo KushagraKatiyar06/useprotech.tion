@@ -17,10 +17,18 @@ WS   /ws/{job_id}          → stream analysis progress events as JSON
 
 Analysis event schema (WebSocket messages)
 ------------------------------------------
-{event: "static_analysis",  status: "running"|"complete", message?, data?}
+{event: "sandbox_static_analysis", status: "running"|"complete", message?, data?}
+                             # Stage 0, tool-based (strings/pefile/exiftool/
+                             # binwalk/YARA/.NET) — runs before the AI pipeline
+{event: "static_analysis_step", status: "running", message, step, total}
+                             # fired once per real sub-step inside the above,
+                             # purely for live progress; step/total are
+                             # 1-indexed ints (e.g. step=3, total=7)
 {event: "pipeline_start",   status: "running",            message,  data}
 {event: "ingestion",        status: "running"|"complete", message?, data?}
 {event: "static_analysis",  status: "running"|"complete", message?, data?}
+                             # the AI classification AGENT — distinct from
+                             # "sandbox_static_analysis" above
 {event: "mitre_mapping",    status: "running"|"complete", message?, data?}
 {event: "remediation",      status: "running"|"complete", message?, data?}
 {event: "report",           status: "running"|"complete", message?, data?}
@@ -28,6 +36,7 @@ Analysis event schema (WebSocket messages)
 {event: "error",            status: "error",              message: str}
 """
 import asyncio
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -41,6 +50,17 @@ import types as _types
 import uuid
 from datetime import datetime
 from pathlib import Path
+
+# Debug prints throughout this app and agents/pipeline.py use arrows/em-dashes/
+# emoji. On Windows, stdout defaults to the system codepage (cp1252) rather
+# than UTF-8, which can't encode those characters — the first such print()
+# raises UnicodeEncodeError and kills whatever background thread called it
+# (e.g. the whole analysis pipeline, mid-run). Force UTF-8 everywhere instead.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 import requests
 from dotenv import load_dotenv
@@ -64,6 +84,7 @@ from agents.pipeline import run_pipeline, enrich_with_virustotal   # noqa: E402
 
 _E2B_AVAILABLE = False
 _ask_gemini_for_patch = None
+_ask_gemini_to_diagnose = None
 _run_once = None
 _TAG_RULES: list = []
 _BASE_MOCK = "console.log('[SYSTEM] Bare sandbox started.');\n"
@@ -77,6 +98,7 @@ try:
         sys.path.insert(0, _testing_dir)
     from e2b_adaptive_sandbox import (          # type: ignore[import]
         ask_gemini_for_patch as _ask_gemini_for_patch,
+        ask_gemini_to_diagnose as _ask_gemini_to_diagnose,
         run_once as _run_once,
         BASE_WINDOWS_MOCK_CATCHALL_ONLY as _BASE_MOCK,
         TAG_RULES as _TAG_RULES,
@@ -89,6 +111,31 @@ try:
     print("[app] e2b adaptive sandbox available")
 except Exception as _e2b_import_err:
     print(f"[app] e2b sandbox not available: {_e2b_import_err}")
+
+
+class _SandboxControl:
+    """Per-adaptive-run human-in-the-loop state. One of these is created in
+    /sandbox/start, before the background thread starts, so it always exists
+    by the time the frontend could possibly call the control endpoints."""
+    def __init__(self) -> None:
+        self.request_control = False        # one-shot: pause on the *next* failure
+        self.end_requested = False
+        self.resume_event = threading.Event()
+        self.guidance: str | None = None
+
+
+_sandbox_controls: dict[str, _SandboxControl] = {}
+
+def _is_rate_limit_error(text: str) -> bool:
+    """Loose match for throttling/quota errors across providers (VT's plain
+    HTTP 429, Gemini's `429 RESOURCE_EXHAUSTED` ClientError text, etc.) so
+    both sandboxes can flag the same condition the same way in the logs."""
+    t = text.lower()
+    return any(marker in t for marker in (
+        "429", "resource_exhausted", "rate limit", "rate-limit",
+        "quota exceeded", "too many requests",
+    ))
+
 
 # ── VirusTotal integration ────────────────────────────────────────────────────
 _VT_API_KEY = os.getenv("VT_API_KEY", "")
@@ -144,21 +191,84 @@ def _enrich_vt_raw(vt_raw: dict) -> dict:
     }
 
 
-def _fetch_vt_behavior(filepath: str, original_name: str, emit) -> dict | None:
+def _fetch_vt_behavior(filepath: str, original_name: str, emit,
+                        skip_event: "threading.Event | None" = None) -> dict | None:
     """Upload file to VirusTotal, poll for completion, return raw behaviour_summary.
 
     Emits {"event": "virustotal", ...} progress events throughout.
     Returns the raw parsed JSON dict, or None if unavailable/skipped.
+
+    skip_event, if given, is checked between every poll — set it (via
+    POST /jobs/{job_id}/skip-virustotal) to abandon a slow poll early and let
+    the rest of the pipeline continue without VT enrichment. Waits use
+    Event.wait(seconds) instead of time.sleep(seconds) so a skip takes effect
+    immediately rather than only after the current wait finishes.
     """
+    def _skipped() -> bool:
+        if skip_event is not None and skip_event.is_set():
+            emit({"event": "virustotal", "status": "skipped",
+                  "message": "Skipped by user"})
+            return True
+        return False
+
+    def _wait(seconds: float) -> bool:
+        """Sleep up to `seconds`, waking early if skipped. Returns True if
+        skipped — and, unlike _skipped() above, also emits the "skipped"
+        status itself, since every call site just does `if _wait(n): return
+        None` and would otherwise leave the frontend's node stuck on
+        "running" forever with no signal that the backend moved on.
+        """
+        if skip_event is None:
+            time.sleep(seconds)
+            return False
+        if skip_event.wait(seconds):
+            emit({"event": "virustotal", "status": "skipped",
+                  "message": "Skipped by user"})
+            return True
+        return False
+
     if not _VT_API_KEY:
         emit({"event": "virustotal", "status": "skipped",
               "message": "VT_API_KEY not configured — skipping VirusTotal enrichment"})
         return None
 
+    if _skipped():
+        return None
+
     try:
-        # 1. Upload specimen
+        # 0. VirusTotal aggregates submissions from everyone — a sample
+        # doesn't have to be obscure to already be fully known; well-known
+        # or previously-analyzed files are extremely common. Check for an
+        # existing report by hash first: it's instant when present, and
+        # re-uploading an already-known file can outright fail with a 409
+        # "AlreadySubmittedError" instead of just being slow.
+        with open(filepath, "rb") as fh:
+            sha256 = hashlib.sha256(fh.read()).hexdigest()
         emit({"event": "virustotal", "status": "running",
-              "message": "Uploading specimen to VirusTotal..."})
+              "message": f"Checking for an existing VT report ({sha256[:16]}...)..."})
+        if _skipped():
+            return None
+        try:
+            existing = requests.get(
+                f"https://www.virustotal.com/api/v3/files/{sha256}/behaviour_summary",
+                headers=_VT_HEADERS, timeout=30,
+            )
+            if existing.status_code == 200:
+                emit({"event": "virustotal", "status": "complete",
+                      "message": f"Existing report found — SHA256 {sha256[:16]}..."})
+                return existing.json()
+            if existing.status_code == 429:
+                emit({"event": "virustotal", "status": "running",
+                      "message": "[RATE LIMIT] VirusTotal throttled (429) on report lookup — continuing to fresh upload..."})
+        except requests.RequestException:
+            pass  # fall through to a fresh upload+scan below
+
+        if _skipped():
+            return None
+
+        # 1. Upload specimen (no existing report — submit for a fresh scan)
+        emit({"event": "virustotal", "status": "running",
+              "message": "No existing report — uploading specimen to VirusTotal..."})
         with open(filepath, "rb") as fh:
             up = requests.post(
                 "https://www.virustotal.com/api/v3/files",
@@ -166,6 +276,10 @@ def _fetch_vt_behavior(filepath: str, original_name: str, emit) -> dict | None:
                 files={"file": (original_name, fh)},
                 timeout=120,
             )
+        if up.status_code == 429:
+            emit({"event": "virustotal", "status": "error",
+                  "message": "[RATE LIMIT] VirusTotal API rate limit hit on upload (429) — try again later or check your API tier."})
+            return None
         if up.status_code != 200:
             emit({"event": "virustotal", "status": "error",
                   "message": f"VT upload failed ({up.status_code}): {up.text[:120]}"})
@@ -178,11 +292,16 @@ def _fetch_vt_behavior(filepath: str, original_name: str, emit) -> dict | None:
         # 2. Poll for AV scan completion (max ~10 min)
         file_hash: str | None = None
         for attempt in range(20):
-            time.sleep(30)
+            if _wait(30):
+                return None
             check = requests.get(
                 f"https://www.virustotal.com/api/v3/analyses/{analysis_id}",
                 headers=_VT_HEADERS, timeout=30,
             )
+            if check.status_code == 429:
+                emit({"event": "virustotal", "status": "running",
+                      "message": f"[RATE LIMIT] VirusTotal throttled (429) during scan poll (attempt {attempt + 1}/20) — backing off..."})
+                continue
             attrs  = check.json()["data"]["attributes"]
             status = attrs.get("status", "")
             emit({"event": "virustotal", "status": "running",
@@ -199,7 +318,8 @@ def _fetch_vt_behavior(filepath: str, original_name: str, emit) -> dict | None:
         # 3. Wait for sandbox detonation then poll behaviour
         emit({"event": "virustotal", "status": "running",
               "message": "Waiting for sandbox detonation (60 s)..."})
-        time.sleep(60)
+        if _wait(60):
+            return None
 
         behavior_url = f"https://www.virustotal.com/api/v3/files/{file_hash}/behaviour_summary"
         for attempt in range(6):
@@ -208,17 +328,23 @@ def _fetch_vt_behavior(filepath: str, original_name: str, emit) -> dict | None:
                 emit({"event": "virustotal", "status": "complete",
                       "message": f"Behavior log fetched — SHA256 {file_hash[:16]}..."})
                 return br.json()
-            emit({"event": "virustotal", "status": "running",
-                  "message": f"Behavior logs not ready yet (attempt {attempt + 1}/6) — retrying in 60 s..."})
-            time.sleep(60)
+            if br.status_code == 429:
+                emit({"event": "virustotal", "status": "running",
+                      "message": f"[RATE LIMIT] VirusTotal throttled (429) fetching behavior log (attempt {attempt + 1}/6) — retrying in 60 s..."})
+            else:
+                emit({"event": "virustotal", "status": "running",
+                      "message": f"Behavior logs not ready yet (attempt {attempt + 1}/6) — retrying in 60 s..."})
+            if _wait(60):
+                return None
 
         emit({"event": "virustotal", "status": "error",
               "message": "Behavior logs unavailable after all retries"})
         return None
 
     except Exception as exc:
+        prefix = "[RATE LIMIT] " if _is_rate_limit_error(str(exc)) else ""
         emit({"event": "virustotal", "status": "error",
-              "message": f"VirusTotal error: {exc}"})
+              "message": f"{prefix}VirusTotal error: {exc}"})
         return None
 
 
@@ -281,6 +407,8 @@ _jobs: dict[str, queue.Queue] = {}
 _sandbox_jobs: dict[str, queue.Queue] = {}
 # filepath kept after main analysis so sandbox can use it (cleaned up by sandbox job)
 _sandbox_files: dict[str, str] = {}
+# set by POST /jobs/{job_id}/skip-virustotal — lets a slow VT poll be cut short
+_vt_skip_events: dict[str, threading.Event] = {}
 
 # ── Extension normalisation ───────────────────────────────────────────────────
 # Suffixes people append to malware samples to make them "safe" to store/share.
@@ -359,12 +487,17 @@ def _run_job(
     filepath: str,
     original_name: str | None = None,
     mode: str = "malware",          # "malware" | "vt_log"
+    run_mode: str = "full",         # "full" | "static_only" — stop after stage 0
 ) -> None:
     """Runs in a daemon thread; pushes JSON-serialisable dicts to the queue.
 
     mode="malware"  → static analysis + live VT API call + Claude pipeline
     mode="vt_log"   → parse uploaded VT JSON directly + Claude pipeline
                       (skips static analysis and VT API call)
+
+    run_mode="full"        → everything, including the Claude/Gemini report agents
+    run_mode="static_only" → stop after static analysis + VirusTotal — no AI
+                              report stages, for a faster/cheaper raw-findings-only run
     """
     q = _jobs[job_id]
 
@@ -389,47 +522,80 @@ def _run_job(
 
             vt_labels = vt_data.get("verdict_labels", [])
             vt_mitre_count = len(vt_data.get("mitre_techniques", []))
+            tail = "Starting AI pipeline..." if run_mode != "static_only" else "Static/dynamic run — stopping here."
             emit({"event": "pipeline_start", "status": "running",
-                  "message": (
-                      f"VT log: {vt_labels} ({vt_mitre_count} MITRE techniques). "
-                      "Starting AI pipeline..."
-                  ),
+                  "message": f"VT log: {vt_labels} ({vt_mitre_count} MITRE techniques). {tail}",
                   "data": metadata})
 
         else:
             # ── Malware file uploaded ─────────────────────────────────────────
-            # Stage 0 — static analysis (sandbox/analyze.py)
-            emit({"event": "static_analysis", "status": "running",
-                  "message": "Running static analysis (deobfuscation + IOC extraction)..."})
-            analysis = analyze_file(filepath)
-            emit({"event": "static_analysis", "status": "complete", "data": {
-                "threat_level":        analysis.get("threat_level", "UNKNOWN"),
-                "is_obfuscated":       analysis.get("is_obfuscated", False),
-                "entropy":             analysis.get("entropy", 0),
-                "behaviors":           analysis.get("behaviors", []),
-                "dangerous_functions": analysis.get("dangerous_functions", []),
-                "mitre_techniques":    analysis.get("mitre_techniques", []),
-                "urls_found":          analysis.get("urls_found", []),
-                "ips_found":           analysis.get("ips_found", []),
-                "registry_keys":       analysis.get("registry_keys", []),
-                "dropped_files":       analysis.get("dropped_files", []),
-            }})
+            # Stage 0 — sandbox static analysis and VirusTotal enrichment run
+            # in parallel. They're independent (VT only needs filepath/
+            # original_name, never the static analysis result), and VT's own
+            # upload+poll loop can take minutes — no reason to make the user
+            # sit through a few seconds of local analysis first.
+            #
+            # "sandbox_static_analysis" is named distinctly from the
+            # "static_analysis" AI agent emitted later in the AI pipeline
+            # (agents/pipeline.py) — they used to share one event name, which
+            # made the AGENTS flowchart's STATIC ANALYSIS node falsely show
+            # "complete" during this sandbox phase, long before the real
+            # agent call ever ran.
+            def _run_sandbox_static_analysis() -> dict:
+                emit({"event": "sandbox_static_analysis", "status": "running",
+                      "message": "Running static analysis (deobfuscation + IOC extraction)..."})
+                result = analyze_file(filepath, emit=lambda msg, step, total: emit(
+                    {"event": "static_analysis_step", "status": "running",
+                     "message": msg, "step": step, "total": total}
+                ))
+                emit({"event": "sandbox_static_analysis", "status": "complete", "data": {
+                    "threat_level":        result.get("threat_level", "UNKNOWN"),
+                    "is_obfuscated":       result.get("is_obfuscated", False),
+                    "entropy":             result.get("entropy", 0),
+                    "behaviors":           result.get("behaviors", []),
+                    "dangerous_functions": result.get("dangerous_functions", []),
+                    "mitre_techniques":    result.get("mitre_techniques", []),
+                    "urls_found":          result.get("urls_found", []),
+                    "ips_found":           result.get("ips_found", []),
+                    "registry_keys":       result.get("registry_keys", []),
+                    "dropped_files":       result.get("dropped_files", []),
+                }})
+                return result
+
+            vt_skip_event = threading.Event()
+            _vt_skip_events[job_id] = vt_skip_event
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                    analysis_future = pool.submit(_run_sandbox_static_analysis)
+                    vt_future = pool.submit(_fetch_vt_behavior, filepath, original_name or "upload.bin",
+                                             emit, vt_skip_event)
+                    analysis = analysis_future.result()
+                    vt_raw = vt_future.result()
+            finally:
+                _vt_skip_events.pop(job_id, None)
 
             metadata = _build_pipeline_input(filepath, analysis, original_name)
-
-            # Stage 0b — live VirusTotal enrichment
-            vt_raw = _fetch_vt_behavior(filepath, original_name or "upload.bin", emit)
             vt_data = _enrich_vt_raw(vt_raw) if vt_raw else None
 
             vt_labels = (vt_data or {}).get("verdict_labels", [])
             vt_mitre_count = len((vt_data or {}).get("mitre_techniques", []))
+            tail = "Starting AI pipeline..." if run_mode != "static_only" else "Static/dynamic run — stopping here."
             if vt_data:
-                msg = (f"VirusTotal: {vt_labels} ({vt_mitre_count} MITRE techniques). "
-                       "Starting AI pipeline...")
+                msg = f"VirusTotal: {vt_labels} ({vt_mitre_count} MITRE techniques). {tail}"
             else:
-                msg = "Static analysis complete — starting AI agent pipeline..."
+                msg = f"Static analysis complete. {tail}"
             emit({"event": "pipeline_start", "status": "running",
                   "message": msg, "data": metadata})
+
+        if run_mode == "static_only":
+            # Static analysis + VirusTotal only — no AI report stages. Cheaper
+            # and faster when you just want the raw findings, not a narrative
+            # report. The frontend never sees `report_stage` events, so its
+            # Reports widget simply never appears — the Agents flowchart and
+            # Raw Logs already show everything this run produced.
+            emit({"event": "done", "status": "complete",
+                  "data": {"report": {}, "run_mode": "static_only"}})
+            return
 
         # ── Stages 1-4 — Claude agents ────────────────────────────────────────
         result = run_pipeline(metadata, progress_cb=emit, vt_data=vt_data)
@@ -458,9 +624,39 @@ def _classify_sandbox_line(msg: str) -> tuple[str, dict | None]:
     return tag, node
 
 
+def _extract_failing_snippet(stderr_text: str, malware_filepath: str, mock_js: str) -> dict | None:
+    """Pull the actual source around a Node crash's file:line, so a paused
+    run shows real code instead of just an error string. malware.js comes
+    from disk; mock.js only exists as the in-memory string we've been
+    accumulating (it's never written to disk on this side)."""
+    m = re.search(r'/home/user/(malware\.js|mock\.js):(\d+)', stderr_text)
+    if not m:
+        return None
+    fname, line_no = m.group(1), int(m.group(2))
+    try:
+        if fname == "malware.js":
+            with open(malware_filepath, "r", encoding="utf-8", errors="ignore") as fh:
+                lines = fh.readlines()
+        else:
+            lines = mock_js.splitlines(keepends=True)
+    except Exception:
+        return None
+    if line_no < 1 or line_no > len(lines):
+        return None
+    start = max(0, line_no - 6)
+    end = min(len(lines), line_no + 5)
+    return {
+        "file": fname,
+        "line": line_no,
+        "start_line": start + 1,
+        "snippet": "".join(lines[start:end]),
+    }
+
+
 def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> None:
     """Adaptive e2b sandbox loop — runs in a daemon thread, emits JSON events."""
     q = _sandbox_jobs[sandbox_job_id]
+    ctrl = _sandbox_controls[sandbox_job_id]
 
     def emit(event: dict) -> None:
         q.put(event)
@@ -506,6 +702,10 @@ def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> No
     try:
         with _E2BSandbox.create() as sandbox:
             for iteration in range(1, _MAX_ITER + 1):
+                if ctrl.end_requested:
+                    log("[SYSTEM] Run ended by user.", "warn")
+                    break
+
                 log(f"[ADAPTIVE] Iteration {iteration} — running sandbox...", "sys")
 
                 events, clean, stderr_text = _run_once(sandbox, current_mock, malware_js)
@@ -535,10 +735,40 @@ def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> No
 
                 err_hash = hashlib.md5(actual_error.encode()).hexdigest()
                 recent_error_hashes.append(err_hash)
-                if (len(recent_error_hashes) >= _STUCK_THRESH
-                        and len(set(recent_error_hashes[-_STUCK_THRESH:])) == 1):
-                    log(f"[ADAPTIVE] Stuck on same error × {_STUCK_THRESH}. Stopping.", "warn")
-                    break
+                stuck = (len(recent_error_hashes) >= _STUCK_THRESH
+                         and len(set(recent_error_hashes[-_STUCK_THRESH:])) == 1)
+
+                # Pause for a human either because we're genuinely stuck (3x
+                # the same error — used to just give up here) or because the
+                # user armed "take control on next failure" ahead of time.
+                # Either way this blocks the thread on ctrl.resume_event
+                # until /sandbox/{id}/continue or /sandbox/{id}/end wakes it.
+                if stuck or ctrl.request_control:
+                    reason = "stuck" if stuck else "user_requested"
+                    ctrl.request_control = False  # one-shot, consumed now
+                    log(f"[ADAPTIVE] Pausing for human input ({reason})...", "warn")
+                    if _ask_gemini_to_diagnose:
+                        try:
+                            diagnosis = _ask_gemini_to_diagnose(stderr_text, current_mock, iteration)
+                        except Exception as diag_exc:
+                            diagnosis = f"(diagnosis unavailable: {diag_exc})"
+                    else:
+                        diagnosis = "(diagnosis unavailable — e2b module not loaded)"
+                    snippet = _extract_failing_snippet(stderr_text, filepath, current_mock)
+                    emit({
+                        "event": "sandbox_awaiting_input",
+                        "reason": reason,
+                        "error": actual_error,
+                        "diagnosis": diagnosis,
+                        "iteration": iteration,
+                        "snippet": snippet,
+                    })
+                    ctrl.resume_event.clear()
+                    ctrl.resume_event.wait()  # blocks until /continue or /end
+                    if ctrl.end_requested:
+                        log("[SYSTEM] Run ended by user.", "warn")
+                        break
+                    emit({"event": "sandbox_resumed", "iteration": iteration})
 
                 if iteration == _MAX_ITER:
                     log("[ADAPTIVE] Safety cap reached. Stopping.", "warn")
@@ -548,16 +778,31 @@ def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> No
                 log(f"[ADAPTIVE] Crash [{origin}]: {actual_error[:80]}", "crit")
                 log("[ADAPTIVE] Asking Gemini to generate patch...", "sys")
 
-                patch = _ask_gemini_for_patch(
-                    stderr_text, current_mock, iteration, mock_broke=mock_broke)
+                try:
+                    patch = _ask_gemini_for_patch(
+                        stderr_text, current_mock, iteration,
+                        mock_broke=mock_broke, user_guidance=ctrl.guidance)
+                except Exception as gemini_exc:
+                    if _is_rate_limit_error(str(gemini_exc)):
+                        log(f"[RATE LIMIT] Gemini API rate limit hit on iteration {iteration} — "
+                            f"{str(gemini_exc)[:160]}", "warn")
+                    else:
+                        log(f"[ERROR] Gemini patch generation failed on iteration {iteration}: "
+                            f"{str(gemini_exc)[:160]}", "crit")
+                    break
+                finally:
+                    ctrl.guidance = None  # one-shot — don't bleed into later iterations
                 patches_applied.append(patch)
-                current_mock = (current_mock
-                                + f"\n\n// === AUTO-PATCH (iteration {iteration}) ===\n"
-                                + patch)
+                # Full replacement, not append — see ask_gemini_for_patch's
+                # docstring. current_mock IS the file Gemini just returned.
+                current_mock = patch
 
-                # Append patch to timestamped file immediately
-                with open(patches_path, "a", encoding="utf-8") as pf:
-                    pf.write(f"// === Patch {iteration} ===\n{patch}\n\n")
+                # Overwrite (not append) with the latest complete mock.js —
+                # by the time the loop ends this file is exactly the final,
+                # clean, directly-usable version, not a log of fragments
+                # that would redeclare things if actually concatenated.
+                with open(patches_path, "w", encoding="utf-8") as pf:
+                    pf.write(current_mock)
 
                 emit({
                     "event": "sandbox_patch",
@@ -565,6 +810,7 @@ def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> No
                     "line": (f"[ADAPTIVE] Patch {iteration} applied "
                              f"({len(patch)} chars) → {patches_path.name}"),
                     "tag": "info",
+                    "mock_js": current_mock,
                 })
 
     except Exception as exc:
@@ -580,6 +826,7 @@ def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> No
         "iterations": len(patches_applied),
         "patch_file": patches_path.name if patches_applied else None,
     })
+    _sandbox_controls.pop(sandbox_job_id, None)
 
 
 # ── API routes ────────────────────────────────────────────────────────────────
@@ -592,13 +839,17 @@ async def health():
 @app.post("/upload")
 async def upload_file(
     file: UploadFile,
-    mode: str | None = Form(None),   # explicit override: "malware" | "vt_log"
+    mode: str | None = Form(None),       # explicit override: "malware" | "vt_log"
+    run_mode: str | None = Form(None),   # "full" (default) | "static_only"
 ):
     """Accept a malware file or a VirusTotal behaviour JSON, start the pipeline.
 
     The frontend can send mode="malware" or mode="vt_log" as a form field to
     force a specific path.  If omitted, the backend auto-detects by sniffing
     the file content.
+
+    run_mode="static_only" stops after static analysis + VirusTotal, skipping
+    the Claude/Gemini report agents — see _run_job for details.
 
     Returns {job_id, filename, mode}.
     """
@@ -628,11 +879,28 @@ async def upload_file(
     # Register the file immediately so sandbox endpoints work without waiting for analysis.
     _sandbox_files[job_id] = tmp_path
 
+    resolved_run_mode = run_mode if run_mode in ("full", "static_only") else "full"
+
     _jobs[job_id] = queue.Queue()
     threading.Thread(
-        target=_run_job, args=(job_id, tmp_path, original_name, resolved_mode), daemon=True
+        target=_run_job,
+        args=(job_id, tmp_path, original_name, resolved_mode, resolved_run_mode),
+        daemon=True,
     ).start()
     return {"job_id": job_id, "filename": original_name, "mode": resolved_mode}
+
+
+@app.post("/jobs/{job_id}/skip-virustotal")
+async def skip_virustotal(job_id: str):
+    """Abandon a slow/stuck VirusTotal poll for this job and let the rest of
+    the pipeline continue without it. No-op (but not an error) if VT already
+    finished, was never started, or this job doesn't exist — skipping late is
+    harmless either way.
+    """
+    event = _vt_skip_events.get(job_id)
+    if event is not None:
+        event.set()
+    return {"skipped": event is not None}
 
 
 @app.post("/sandbox/upload")
@@ -775,12 +1043,52 @@ async def sandbox_start(job_id: str):
 
     sandbox_job_id = str(uuid.uuid4())
     _sandbox_jobs[sandbox_job_id] = queue.Queue()
+    # Created before the thread starts so /request-control, /continue and
+    # /end can never 404 on a race against the thread not having set it up yet.
+    _sandbox_controls[sandbox_job_id] = _SandboxControl()
     threading.Thread(
         target=_run_sandbox_job,
         args=(sandbox_job_id, filepath, job_id),
         daemon=True,
     ).start()
     return {"sandbox_job_id": sandbox_job_id, "e2b_available": _E2B_AVAILABLE}
+
+
+def _get_sandbox_control(sandbox_job_id: str) -> "_SandboxControl":
+    ctrl = _sandbox_controls.get(sandbox_job_id)
+    if ctrl is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Unknown or already-finished sandbox run")
+    return ctrl
+
+
+@app.post("/sandbox/{sandbox_job_id}/request-control")
+async def sandbox_request_control(sandbox_job_id: str):
+    """Arm a one-shot pause: the *next* failure (not necessarily 3x the same
+    error) will stop and wait for human input instead of auto-patching."""
+    ctrl = _get_sandbox_control(sandbox_job_id)
+    ctrl.request_control = True
+    return {"ok": True}
+
+
+@app.post("/sandbox/{sandbox_job_id}/continue")
+async def sandbox_continue(sandbox_job_id: str, guidance: str | None = None):
+    """Resume a paused adaptive run, optionally steering the next patch with
+    free-text guidance (see ask_gemini_for_patch's user_guidance param)."""
+    ctrl = _get_sandbox_control(sandbox_job_id)
+    ctrl.guidance = guidance or None
+    ctrl.resume_event.set()
+    return {"ok": True}
+
+
+@app.post("/sandbox/{sandbox_job_id}/end")
+async def sandbox_end(sandbox_job_id: str):
+    """Stop an adaptive run immediately — whether it's mid-iteration or
+    currently paused waiting on human input."""
+    ctrl = _get_sandbox_control(sandbox_job_id)
+    ctrl.end_requested = True
+    ctrl.resume_event.set()  # wake it up if it's currently paused
+    return {"ok": True}
 
 
 @app.websocket("/ws/sandbox/{sandbox_job_id}")
@@ -799,10 +1107,13 @@ async def sandbox_websocket(websocket: WebSocket, sandbox_job_id: str) -> None:
     try:
         while True:
             try:
-                event = await loop.run_in_executor(None, lambda: q.get(timeout=600))
+                # Generous — a human-in-the-loop pause can legitimately sit
+                # idle for a while (reading the diagnosis, typing guidance)
+                # without the run actually being stuck or dead.
+                event = await loop.run_in_executor(None, lambda: q.get(timeout=3600))
             except queue.Empty:
                 await websocket.send_json(
-                    {"event": "sandbox_error", "message": "Sandbox timed out (600 s)"})
+                    {"event": "sandbox_error", "message": "Sandbox timed out (3600 s)"})
                 break
 
             await websocket.send_json(event)

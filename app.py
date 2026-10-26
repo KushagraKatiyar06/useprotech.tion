@@ -409,6 +409,13 @@ _sandbox_jobs: dict[str, queue.Queue] = {}
 _sandbox_files: dict[str, str] = {}
 # set by POST /jobs/{job_id}/skip-virustotal — lets a slow VT poll be cut short
 _vt_skip_events: dict[str, threading.Event] = {}
+# keyed by the main upload job_id (not sandbox_job_id) — created when
+# /sandbox/start/{job_id} launches an adaptive run, set when that run
+# finishes. _run_job waits on this before its own Gemini-calling report
+# stage, so the sandbox's Gemini patch loop and the report pipeline's
+# Gemini calls never run at the same time. Absence from this dict means
+# no sandbox run was started for that job at all (e.g. vt_log mode).
+_sandbox_done_events: dict[str, threading.Event] = {}
 
 # ── Extension normalisation ───────────────────────────────────────────────────
 # Suffixes people append to malware samples to make them "safe" to store/share.
@@ -597,6 +604,29 @@ def _run_job(
                   "data": {"report": {}, "run_mode": "static_only"}})
             return
 
+        # The dashboard auto-starts an e2b adaptive sandbox run for this same
+        # job_id right after upload (see LinuxSandboxPanel's autoStart), and
+        # that loop calls Gemini on every crash to generate a patch. Without
+        # this wait, its Gemini calls and the report stage below's Gemini
+        # calls run at the same time — GEMINI_LOCK only keeps them from
+        # literally overlapping mid-request, not from both being "in
+        # progress" together. Give /sandbox/start a brief window to register
+        # (it's called within ~1s of upload, well inside the time static
+        # analysis + VT just took), then wait for it to finish — capped so a
+        # sandbox run paused on human-in-the-loop input can't block the
+        # report forever.
+        if mode == "malware":
+            sandbox_event = None
+            for _ in range(25):  # ~5s grace period
+                sandbox_event = _sandbox_done_events.get(job_id)
+                if sandbox_event is not None:
+                    break
+                time.sleep(0.2)
+            if sandbox_event is not None and not sandbox_event.is_set():
+                emit({"event": "pipeline_start", "status": "running",
+                      "message": "Waiting for the sandbox run to finish before starting AI agents..."})
+                sandbox_event.wait(timeout=360)
+
         # ── Stages 1-4 — Claude agents ────────────────────────────────────────
         result = run_pipeline(metadata, progress_cb=emit, vt_data=vt_data)
         emit({"event": "done", "status": "complete", "data": result})
@@ -654,6 +684,20 @@ def _extract_failing_snippet(stderr_text: str, malware_filepath: str, mock_js: s
 
 
 def _run_sandbox_job(sandbox_job_id: str, filepath: str, main_job_id: str) -> None:
+    """Thin wrapper around _run_sandbox_job_impl that guarantees
+    _sandbox_done_events[main_job_id] gets set on every exit path (normal
+    finish, early return, or uncaught exception) — _run_job blocks on that
+    event before starting its own Gemini-calling report stage.
+    """
+    try:
+        _run_sandbox_job_impl(sandbox_job_id, filepath, main_job_id)
+    finally:
+        done_event = _sandbox_done_events.get(main_job_id)
+        if done_event is not None:
+            done_event.set()
+
+
+def _run_sandbox_job_impl(sandbox_job_id: str, filepath: str, main_job_id: str) -> None:
     """Adaptive e2b sandbox loop — runs in a daemon thread, emits JSON events."""
     q = _sandbox_jobs[sandbox_job_id]
     ctrl = _sandbox_controls[sandbox_job_id]
@@ -1046,6 +1090,9 @@ async def sandbox_start(job_id: str):
     # Created before the thread starts so /request-control, /continue and
     # /end can never 404 on a race against the thread not having set it up yet.
     _sandbox_controls[sandbox_job_id] = _SandboxControl()
+    # Registers that an adaptive (Gemini-using) sandbox run is happening for
+    # this upload job — _run_job waits on this before its own Gemini calls.
+    _sandbox_done_events[job_id] = threading.Event()
     threading.Thread(
         target=_run_sandbox_job,
         args=(sandbox_job_id, filepath, job_id),

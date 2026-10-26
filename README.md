@@ -90,6 +90,10 @@ npm run dev      # http://localhost:3000
 
 The backend serves the API/WebSocket on `:8000`; the frontend dev server on `:3000` talks to it automatically. For a production static build instead of dev mode, run `npm run build` (produces `frontend/out/`) and visit `http://localhost:8000` — the backend serves the static export directly.
 
+## Deployment
+
+Hosted on [Railway](https://railway.app), built from the root `Dockerfile` — one service serves both the FastAPI backend and the static frontend export (`frontend/out/`). Railway auto-deploys on every push to `main`. Set `GEMINI_API_KEY` and `E2B_API_KEY` (and optionally `VT_API_KEY`) as environment variables on the service; `PORT` is injected automatically.
+
 ## Contributors
 
 - Kushagra K

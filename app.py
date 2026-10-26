@@ -164,7 +164,11 @@ def _enrich_vt_raw(vt_raw: dict) -> dict:
     Mirrors pipeline.enrich_with_virustotal() but takes the parsed dict
     directly so we don't need to write a temp file.
     """
-    data = vt_raw.get("data", {})
+    # .get("data", {}) only covers a MISSING key — VT's behaviour_summary
+    # endpoint can return {"data": null, ...} for a hash with an existing
+    # file record but no behavioral data yet, which that still passes
+    # through as None and crashes the next .get() call below.
+    data = vt_raw.get("data") or {}
 
     seen_ids: set = set()
     mitre: list = []
@@ -350,7 +354,7 @@ def _fetch_vt_behavior(filepath: str, original_name: str, emit,
 
 def _build_pipeline_input_from_vt(vt_raw: dict, original_name: str, content: bytes) -> dict:
     """Build pipeline metadata dict from a VT behaviour_summary JSON."""
-    data = vt_raw.get("data", {})
+    data = vt_raw.get("data") or {}
     size_kb = round(len(content) / 1024, 2)
     sha256 = hashlib.sha256(content).hexdigest()
 

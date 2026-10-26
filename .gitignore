@@ -9,6 +9,7 @@ agents/.env
 
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -21,17 +22,6 @@ build/
 
 # Sandbox generated patches (can be large, machine-specific)
 testing/patches/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-*.egg-info/
-dist/
-build/
-.DS_Store
 
 # Malware samples
 *.malicious

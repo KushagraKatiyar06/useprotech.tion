@@ -1,9 +1,15 @@
+import os
 import requests
 import time
 import json
 from pathlib import Path
+from dotenv import load_dotenv
 
-API_KEY = "027e8033160ecda2bc6eced4d39f254783a1640e88c0eba112ea3ad661a3db0b"
+load_dotenv()
+
+API_KEY = os.environ.get("VT_API_KEY", "")
+if not API_KEY:
+    raise SystemExit("VT_API_KEY not set — add it to your .env file")
 _SCRIPT_DIR = Path(__file__).parent
 FILE_PATH = _SCRIPT_DIR / "samples" / "6108674530.JS.malicious"
 _RESULTS_DIR = _SCRIPT_DIR / "results"

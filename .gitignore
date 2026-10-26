@@ -9,6 +9,7 @@ agents/.env
 
 # Python
 venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -22,31 +23,21 @@ build/
 # Sandbox generated patches (can be large, machine-specific)
 testing/patches/
 
-# Python
-__pycache__/
-*.pyc
-*.pyo
-.venv/
-venv/
-*.egg-info/
-dist/
-build/
-.DS_Store
-
-# Malware samples
+# Malware samples (new samples stay local-only; the demo sample below ships with the app)
 *.malicious
-testing/6108674530.JS.malicious
 *.mal
 *.bin
 *.exe
 *.dll
 *.ps1
-samples/
+testing/samples/*
+!testing/samples/6108674530.JS.malicious
 
-# Analysis output
+# Analysis output (same deal — the demo result below ships with the app)
 *.json
 output/
-results/
+testing/results/*
+!testing/results/sample_malware_behavior.json
 
 # Docker
 .dockerignore

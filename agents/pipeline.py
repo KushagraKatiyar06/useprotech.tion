@@ -95,7 +95,10 @@ def enrich_with_virustotal(vt_json_path: str) -> dict:
     """
     with open(vt_json_path, encoding="utf-8") as fh:
         raw = json.load(fh)
-    data = raw.get("data", {})
+    # .get("data", {}) only covers a MISSING key — VT's behaviour_summary
+    # endpoint can return {"data": null, ...}, which that still passes
+    # through as None and crashes the next .get() call below.
+    data = raw.get("data") or {}
 
     # MITRE — deduplicate on ID, keep first description seen per ID
     seen_ids: set = set()

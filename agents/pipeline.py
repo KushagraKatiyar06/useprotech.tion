@@ -1,6 +1,7 @@
 import concurrent.futures
 import json
 import os
+import threading
 from google import genai
 from google.genai import types as genai_types
 from dotenv import load_dotenv
@@ -20,8 +21,15 @@ MODEL = "gemini-2.5-flash"
 
 CALL_TIMEOUT = 45  # seconds — hard limit per Gemini call
 
+# Serializes every Gemini call in the process — this pipeline's own stages
+# AND the e2b adaptive sandbox's patch/diagnose loop (testing/e2b_adaptive_sandbox.py
+# imports this lock). Without it, a file upload's report pipeline and that
+# same job's live sandbox run fire Gemini requests concurrently, competing
+# for rate limit and making both runs slower and noisier at once.
+GEMINI_LOCK = threading.Lock()
+
 def call_llm(system_prompt: str, user_message: str, timeout: int = 45, max_tokens: int = 2000) -> dict:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+    with GEMINI_LOCK, concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
         future = executor.submit(
             lambda: _get_client().models.generate_content(
                 model=MODEL,

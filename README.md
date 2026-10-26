@@ -1,6 +1,6 @@
 # UseProtection
 
-An AI-powered malware analysis platform. Drop in a suspicious file (or a VirusTotal log) and get back a full automated security report — static analysis, live sandboxed execution, MITRE ATT&CK mapping, and remediation guidance — all streamed in real time to a dashboard.
+An AI-powered malware analysis platform. Drop in a suspicious file (or a VirusTotal log) and get back a full automated security report, static analysis, live sandboxed execution, MITRE ATT&CK mapping, and remediation guidance, all streamed in real time to a dashboard.
 
 🏆 **Winner — Cybersecurity & AI Track (sponsored by NextEra)** at HackUSF. [View on Devpost](https://devpost.com/software/use-protech-tion)
 

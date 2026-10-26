@@ -673,7 +673,10 @@ const TAG_COLOR: Record<string, string> = {
   crit: '#f43f5e',
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+// Empty string = relative/same-origin, which is correct for the production
+// static export (served by the same FastAPI app on Railway). Local dev sets
+// NEXT_PUBLIC_API_URL via frontend/.env.local to point at :8000 instead.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 export default function LinuxSandboxPanel({ staticData, jobId, autoStart, onRunningChange }: Props) {
   const { active: wiresActive } = useRunActive();
@@ -854,7 +857,9 @@ export default function LinuxSandboxPanel({ staticData, jobId, autoStart, onRunn
 
   function connectSandboxWS(sandbox_job_id: string) {
     setCurrentSandboxJobId(sandbox_job_id);
-    const wsBase = API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'));
+    const wsBase = API_URL
+      ? API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'))
+      : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
     const ws = new WebSocket(`${wsBase}/ws/sandbox/${sandbox_job_id}`);
 
     ws.onmessage = (ev) => {

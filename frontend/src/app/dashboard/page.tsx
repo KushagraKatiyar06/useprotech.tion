@@ -21,7 +21,10 @@ import { useIsNarrow } from '@/lib/useIsNarrow';
 import dynamic from 'next/dynamic';
 const LinuxSandboxPanel = dynamic(() => import('@/components/LinuxSandboxPanel'), { ssr: false });
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+// Empty string = relative/same-origin, which is correct for the production
+// static export (served by the same FastAPI app on Railway). Local dev sets
+// NEXT_PUBLIC_API_URL via frontend/.env.local to point at :8000 instead.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 // 4 honest phases, each driven by a real WS/fetch event — no fixed timer.
 // UPLOAD=0, SANDBOX=1, AGENTS=2, REPORT=3.
@@ -213,7 +216,9 @@ export default function Dashboard() {
           } else {
             advanceStage(1); // UPLOAD done, SANDBOX active
           }
-          const wsBase = API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'));
+          const wsBase = API_URL
+            ? API_URL.replace(/^https?/, s => (s === 'https' ? 'wss' : 'ws'))
+            : `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`;
           const ws = new WebSocket(`${wsBase}/ws/${job_id}`);
 
           ws.onmessage = (ev) => {

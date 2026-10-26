@@ -19,7 +19,10 @@ interface Props {
   fileInfo: FileInfo | null;
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+// Empty string = relative/same-origin, which is correct for the production
+// static export (served by the same FastAPI app on Railway). Local dev sets
+// NEXT_PUBLIC_API_URL via frontend/.env.local to point at :8000 instead.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? '';
 
 const MODE_STYLE = {
   tab: (active: boolean, accent: string) => ({

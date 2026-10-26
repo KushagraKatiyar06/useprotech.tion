@@ -510,8 +510,9 @@ export default function Dashboard() {
 
             {/* Always visible now — not something to dig for behind a toggle.
                 LinuxSandboxPanel renders its own Panel heading, so no separate
-                label is needed here (that used to duplicate it). Starts
-                automatically, in parallel with static analysis. */}
+                label is needed here (that used to duplicate it). No autoStart —
+                waits for the user to press "RUN SANDBOX" rather than firing on
+                its own the moment a jobId is available. */}
             {/* Explicit gridRow, not left to auto-placement: once File Intake
                 unmounts (intakeCollapsed) its row becomes vacant, and an
                 auto-placed item greedily fills the first open cell — on the
@@ -521,7 +522,6 @@ export default function Dashboard() {
               <LinuxSandboxPanel
                 staticData={staticData}
                 jobId={jobId}
-                autoStart
                 onRunningChange={setSandboxRunning}
               />
             </div>

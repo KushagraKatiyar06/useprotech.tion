@@ -12,6 +12,7 @@ Strategy:
 
 import os
 import re
+import sys
 import json
 import hashlib
 import networkx as nx
@@ -28,6 +29,15 @@ from e2b_code_interpreter import Sandbox
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent.absolute()
 load_dotenv(dotenv_path=SCRIPT_DIR / ".env")
+
+# Shares a Gemini call lock with agents/pipeline.py so this module's patch
+# loop and the main report pipeline never hit the Gemini API at the same
+# time, whether this file is imported by app.py or run standalone from
+# testing/ (hence the explicit project-root sys.path fix below).
+_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+from agents.pipeline import GEMINI_LOCK
 
 MAX_ITERATIONS  = 5    # max Gemini patch iterations per run
 STUCK_THRESHOLD = 3    # stop if the same error repeats this many times in a row
@@ -363,11 +373,12 @@ def ask_gemini_for_patch(error_output: str, current_mock: str, iteration: int,
         f"behavior chain."
     )
 
-    response = client.models.generate_content(
-        model="gemini-2.5-pro",
-        config=types.GenerateContentConfig(system_instruction=system_prompt),
-        contents=user_msg,
-    )
+    with GEMINI_LOCK:
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            config=types.GenerateContentConfig(system_instruction=system_prompt),
+            contents=user_msg,
+        )
     updated_mock = response.text.strip()
 
     # Strip accidental markdown fences
@@ -403,11 +414,12 @@ def ask_gemini_to_diagnose(error_output: str, current_mock: str, iteration: int)
         f"Why do you think this keeps happening, and what would you try differently?"
     )
 
-    response = client.models.generate_content(
-        model="gemini-2.5-pro",
-        config=types.GenerateContentConfig(system_instruction=system_prompt),
-        contents=user_msg,
-    )
+    with GEMINI_LOCK:
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            config=types.GenerateContentConfig(system_instruction=system_prompt),
+            contents=user_msg,
+        )
     return response.text.strip()
 
 
@@ -915,21 +927,22 @@ def extract_and_analyze_payload(filename: str, G: nx.DiGraph):
     # Ask Gemini to enumerate behaviors from the decoded PowerShell/payload
     print("\n[PAYLOAD] Asking Gemini to enumerate payload-layer behaviors...")
     client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
-    response = client.models.generate_content(
-        model="gemini-2.5-pro",
-        config=types.GenerateContentConfig(system_instruction=(
-            "You are a malware analyst. Given a PowerShell script or encoded payload from "
-            "an Agent Tesla dropper, enumerate every observable behavior as a JSON array. "
-            "Each item: {\"type\": \"NETWORK|REGISTRY|EXEC|FILE|WMI|CREDENTIAL\", "
-            "\"detail\": \"<specific value — URL, registry key, filename, query, etc.>\"}. "
-            "Be specific — use exact strings from the script where visible. "
-            "Output ONLY the JSON array, no markdown."
-        )),
-        contents=(
-            f"Analyze this decoded payload and list every behavior:\n\n"
-            f"{ps_script[:6000]}"
-        ),
-    )
+    with GEMINI_LOCK:
+        response = client.models.generate_content(
+            model="gemini-2.5-pro",
+            config=types.GenerateContentConfig(system_instruction=(
+                "You are a malware analyst. Given a PowerShell script or encoded payload from "
+                "an Agent Tesla dropper, enumerate every observable behavior as a JSON array. "
+                "Each item: {\"type\": \"NETWORK|REGISTRY|EXEC|FILE|WMI|CREDENTIAL\", "
+                "\"detail\": \"<specific value — URL, registry key, filename, query, etc.>\"}. "
+                "Be specific — use exact strings from the script where visible. "
+                "Output ONLY the JSON array, no markdown."
+            )),
+            contents=(
+                f"Analyze this decoded payload and list every behavior:\n\n"
+                f"{ps_script[:6000]}"
+            ),
+        )
 
     root_node = filename
     try:

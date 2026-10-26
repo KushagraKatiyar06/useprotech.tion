@@ -23,20 +23,21 @@ build/
 # Sandbox generated patches (can be large, machine-specific)
 testing/patches/
 
-# Malware samples
+# Malware samples (new samples stay local-only; the demo sample below ships with the app)
 *.malicious
-testing/6108674530.JS.malicious
 *.mal
 *.bin
 *.exe
 *.dll
 *.ps1
-samples/
+testing/samples/*
+!testing/samples/6108674530.JS.malicious
 
-# Analysis output
+# Analysis output (same deal — the demo result below ships with the app)
 *.json
 output/
-results/
+testing/results/*
+!testing/results/sample_malware_behavior.json
 
 # Docker
 .dockerignore

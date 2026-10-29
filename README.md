@@ -16,6 +16,8 @@ An AI-powered malware analysis platform. Drop in a suspicious file (or a VirusTo
   <img src="https://img.shields.io/badge/Railway-0B0D0E?style=for-the-badge&logo=railway&logoColor=white" alt="Railway">
 </p>
 
+Live demo: https://useprotechtion-production.up.railway.app/
+
 ## What it does
 
 1. **Upload** a file (or paste a VirusTotal report) through the web UI.

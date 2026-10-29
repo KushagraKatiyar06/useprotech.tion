@@ -5,6 +5,16 @@ An AI-powered malware analysis platform. Drop in a suspicious file (or a VirusTo
 🏆 **Winner — Cybersecurity & AI Track (sponsored by NextEra)** at HackUSF. [View on Devpost](https://devpost.com/software/use-protech-tion)
 
 ![Landing page](screenshot/landing-hero.png)
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/FastAPI-WebSockets-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/Next.js-15-000000?style=for-the-badge&logo=next.js&logoColor=white" alt="Next.js 15">
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React 19">
+  <img src="https://img.shields.io/badge/Google%20Gemini-AI%20Agents-4285F4?style=for-the-badge&logo=googlegemini&logoColor=white" alt="Google Gemini">
+  <img src="https://img.shields.io/badge/E2B-Sandbox-000000?style=for-the-badge&logoColor=white" alt="E2B">
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/Railway-0B0D0E?style=for-the-badge&logo=railway&logoColor=white" alt="Railway">
+</p>
 
 ## What it does
 
@@ -93,6 +103,19 @@ The backend serves the API/WebSocket on `:8000`; the frontend dev server on `:30
 ## Deployment
 
 Hosted on [Railway](https://railway.app), built from the root `Dockerfile` — one service serves both the FastAPI backend and the static frontend export (`frontend/out/`). Railway auto-deploys on every push to `main`. Set `GEMINI_API_KEY` and `E2B_API_KEY` (and optionally `VT_API_KEY`) as environment variables on the service; `PORT` is injected automatically.
+
+## File Structure
+
+| Folder | What is in it |
+|---|---|
+| `app.py` | FastAPI app — HTTP/WebSocket routes, job orchestration, and the adaptive sandbox loop |
+| `agents/` | The AI agent pipeline (static analysis → VT enrichment → classification → ATT&CK mapping → report generation) |
+| `sandbox/` | Static analysis engine (PE/.NET parsing, YARA, entropy, IOC extraction) and the dynamic-analysis sandbox harness |
+| `frontend/` | Next.js dashboard — upload UI, live pipeline/sandbox views, and PDF report export |
+| `testing/` | Standalone scripts for exercising the sandbox, VirusTotal integration, and HA checks outside the full pipeline |
+| `screenshot/` | Images used in this README |
+| `Dockerfile` | Container build serving both the FastAPI backend and the static frontend export |
+| `start.bat` | One-click Windows setup/launch script |
 
 ## Contributors
 
